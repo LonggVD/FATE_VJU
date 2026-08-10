@@ -1,0 +1,1707 @@
+/* ═══════════════════════════════════════════════════════════════════
+   CSS thủ công CÒN LẠI sau refactor giao diện VJU.
+
+   Nạp qua `@import './styles.css' layer(legacy)` trong app.css — KHÔNG
+   import thẳng từ main.jsx, nếu không cái reset `*{margin:0;padding:0}`
+   bên dưới sẽ nằm ngoài cascade layer và đè chết mọi utility padding
+   và margin của Tailwind.
+
+   Chỉ còn phục vụ những chỗ CỐ Ý không migrate sang Tailwind:
+     · lưới thời khoá biểu (.schedv2-grid-*, .lesson-bar, .lesson-popover)
+       — thuật toán chia cột + định vị px, port sang Tailwind chỉ rước rủi ro;
+     · bảng nhiệt dùng chung (.wkgrid, thang d0..d5) — thang màu tuần tự
+       được căn riêng, dùng chung 3 màn;
+     · bảng mirror 29 cột của Excel (.xls-*, .data-table).
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Ba ten cu --muted / --accent / --radius DUNG TRUNG voi token shadcn trong
+   app.css. Neu de nguyen, dinh nghia o day se de len token that va lam hong ca
+   he thong (vd bg-muted hoa xam dam). Nen doi thanh --tkb-* o day va o toan bo
+   642 class ben duoi; cac ten con lai khong dung do nen giu nguyen. */
+
+:root {
+  /* Do chu dao VJU #D82827 - truoc day bi dat nham thanh indigo #d82827. */
+  --brand-red: var(--primary);
+  --brand-red-dark: oklch(0.47 0.19 27);
+  --paper: var(--card);
+  --ink: var(--foreground);
+  --ink2: #4f4f4f; /* chu phu, dam hon --muted-foreground mot bac */
+  --tkb-muted: var(--muted-foreground);
+  --line: var(--border);
+  --line-light: oklch(0.968 0.007 247.896); /* slate-100, = token --muted */
+  --bg: #f8fafc; /* nen canvas = bg-muted/40 cua reference */
+  --tkb-accent: var(--primary);
+  --accent-light: oklch(0.7 0.15 27);
+  --accent-bg: var(--accent); /* nen do nhat - token --accent cua shadcn */
+  --green: var(--status-approved); /* xanh la VJU #1f701f */
+  --green-bg: #dcfce7;
+  --red: var(--destructive);
+  --red-bg: #fee2e2;
+  --orange: var(--status-pending); /* amber trang thai cho duyet */
+  --orange-bg: #fffbeb;
+  --tkb-radius: 0.625rem; /* = --radius cua design system VJU */
+  --shadow: 0 1px 3px 0 rgb(0 0 0 / .1), 0 1px 2px -1px rgb(0 0 0 / .1);
+  --transition: .2s ease;
+}
+
+/* ═══ Reset ═══ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+select:focus-visible {
+  outline: 2px solid #ffd27a;
+  outline-offset: 1px;
+}
+
+/* ═══════════════════════════════════════════
+   Scheduling System
+   ═══════════════════════════════════════════ */
+
+.schedv2 {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.score-pill.warn {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: #fecaca;
+}
+
+.lesson-card h4 {
+  margin: 4px 0 2px;
+  font-size: 12px;
+  color: #0f172a;
+}
+
+.lesson-card p {
+  margin: 0;
+  font-size: 11px;
+  color: #475569;
+}
+
+.schedv2-grid-wrap {
+  overflow: visible;
+  padding: 8px;
+}
+
+.schedv2-grid-table {
+  display: grid;
+  min-width: 540px;
+  width: 100%;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--tkb-radius);
+  /* overflow visible so spanning cards aren't clipped */
+  overflow: visible;
+  position: relative;
+}
+
+.schedv2-grid-cell {
+  border-right: 1px solid #e2e8f0;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 6px;
+  font-size: 10px;
+  color: #334155;
+  /* cells fill their grid area */
+  overflow: hidden;
+}
+
+.schedv2-grid-cell.time {
+  background: #f8fafc;
+  font-weight: 700;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+}
+
+.schedv2-grid-cell.time strong {
+  font-size: 10px;
+}
+
+.schedv2-grid-cell.time span {
+  font-size: 9px;
+  color: #94a3b8;
+}
+
+.schedv2-grid-cell.day {
+  background: #f1f5f9;
+  text-align: center;
+  font-weight: 700;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.schedv2-grid-cell.body {
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: relative;
+}
+
+/* The host cell for a spanning lesson — stretches the card */
+
+.schedv2-grid-cell.body.lesson-cell-host {
+  padding: 3px;
+  overflow: visible;
+}
+
+.schedv2-grid-cell.body.lesson-cell-host>.lesson-card {
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  overflow: visible;
+}
+
+.schedv2-grid-cell.sat {
+  background: #fff7ed;
+}
+
+.score-box.warn {
+  background: #fee2e2;
+  border-color: #fecaca;
+}
+
+.stat-pill.warn b {
+  color: var(--red);
+}
+
+/* ─── Drag & Drop ─── */
+
+.schedv2.is-dragging .schedv2-grid-cell.body {
+  outline: 2px dashed transparent;
+  transition: outline-color .15s, background .15s;
+}
+
+.schedv2.is-dragging .schedv2-grid-cell.body:not(.drop-target) {
+  outline-color: #f2a3a2;
+}
+
+.schedv2-grid-cell.body.drop-target {
+  background: #fdf2f2 !important;
+  outline: 2px solid #a81f1e !important;
+  outline-offset: -2px;
+}
+
+.panel-list.drop-target {
+  background: #fef3c7;
+  border: 2px dashed #f59e0b;
+  border-radius: 8px;
+}
+
+/* ─── Lesson Cards (unified) ─── */
+
+.lesson-card {
+  border: 1px solid #cbd5f5;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff;
+  cursor: grab;
+  transition: transform .15s, box-shadow .15s, opacity .15s;
+  position: relative;
+}
+
+.lesson-card:hover {
+  box-shadow: 0 2px 8px rgba(216, 40, 39, .15);
+  transform: translateY(-1px);
+}
+
+.lesson-card:active {
+  cursor: grabbing;
+}
+
+.lesson-card.dragging {
+  opacity: .4;
+  transform: scale(.95);
+}
+
+.lesson-card.pending {
+  border-style: dashed;
+  border-color: #fdba74;
+  background: #fffbeb;
+}
+
+.lesson-card.grid {
+  padding: 5px 7px;
+  font-size: 10px;
+  border-radius: 6px;
+  background: #f8fafc;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.lesson-card .lesson-remove {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  font-size: 10px;
+  color: #94a3b8;
+  cursor: pointer;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity .15s;
+  z-index: 10;
+}
+
+.lesson-card:hover .lesson-remove {
+  opacity: 1;
+}
+
+.lesson-card .lesson-remove:hover {
+  color: #ef4444;
+}
+
+/* Ensure single-line clean truncation for grid cards */
+
+.lesson-card.grid strong {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #1e293b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 2px 0 1px;
+}
+
+.lesson-card.grid .lesson-teacher {
+  display: block;
+  font-size: 9px;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lesson-card.grid .lesson-head {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.lesson-card.grid .lesson-head span {
+  flex-shrink: 0;
+  font-size: 8px;
+  padding: 1px 4px;
+}
+
+.lesson-card.grid .lesson-meta {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  margin-top: auto;
+  /* Push metadata to bottom of card */
+}
+
+.lesson-card.grid .lesson-meta span {
+  flex-shrink: 0;
+  font-size: 8px;
+  padding: 1px 3px;
+}
+
+/* 2 overlaps: Standard ellipsis */
+
+.lesson-card.cols-2 strong {
+  white-space: nowrap;
+}
+
+.lesson-card.cols-2 .lesson-teacher {
+  white-space: nowrap;
+}
+
+/* 3 overlaps: Hide teacher names & capacity badge inside the cell to prevent wrapping */
+
+.lesson-card.cols-3 .lesson-teacher {
+  display: none !important;
+}
+
+.lesson-card.cols-3 .lesson-meta .meta-cap {
+  display: none !important;
+}
+
+/* 4 or more overlaps: extreme density. Hide teacher, metadata, and non-critical badges */
+
+.lesson-card.cols-4 .lesson-teacher,
+.lesson-card.cols-5 .lesson-teacher,
+.lesson-card.cols-6 .lesson-teacher {
+  display: none !important;
+}
+
+.lesson-card.cols-4 .lesson-meta,
+.lesson-card.cols-5 .lesson-meta,
+.lesson-card.cols-6 .lesson-meta {
+  display: none !important;
+}
+
+.lesson-card.cols-4 .lesson-head .lesson-year,
+.lesson-card.cols-4 .lesson-head .lesson-shared-badge,
+.lesson-card.cols-5 .lesson-head .lesson-year,
+.lesson-card.cols-5 .lesson-head .lesson-shared-badge,
+.lesson-card.cols-6 .lesson-head .lesson-year,
+.lesson-card.cols-6 .lesson-head .lesson-shared-badge {
+  display: none !important;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse {
+
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: .5;
+    transform: scale(.88);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ─── Lesson Hover Tooltip ─── */
+
+.lesson-card {
+  position: relative;
+  z-index: 1;
+}
+
+.lesson-card:hover {
+  z-index: 100;
+}
+
+.lesson-card:hover .lesson-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(-50%) translateX(0);
+}
+
+/* --- Flip tooltip to left when near right edge --- */
+
+.lesson-tooltip.flip-left {
+  left: auto;
+  right: calc(100% + 10px);
+  transform: translateY(-50%) translateX(-6px);
+}
+
+.lesson-card:hover .lesson-tooltip.flip-left {
+  transform: translateY(-50%) translateX(0);
+}
+
+.lesson-tooltip.flip-left::before {
+  left: auto;
+  right: -6px;
+  margin-left: 0;
+}
+
+/* --- Top row: badges --- */
+
+.tt-row-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.tt-major {
+  background: #dbeafe;
+  color: #1e40af;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+}
+
+.tt-section {
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* --- Subject name --- */
+
+.tt-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1.35;
+  margin-bottom: 12px;
+}
+
+/* --- Teacher row --- */
+
+.tt-teacher-row {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+
+.tt-teacher-row strong {
+  display: block;
+  color: #e2e8f0;
+  font-size: 13px;
+}
+
+/* --- Duration + SV grid --- */
+
+.tt-details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.tt-detail-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* --- Labels and values --- */
+
+.tt-label {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.tt-val {
+  font-size: 12px;
+  color: #f1f5f9;
+  font-weight: 600;
+}
+
+/* --- Room row --- */
+
+.tt-room-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-top: 1px solid #334155;
+  padding-top: 10px;
+  margin-top: 2px;
+}
+
+.lesson-card.highlighted {
+  box-shadow: 0 0 0 3px #d82827, 0 10px 15px -3px rgba(216, 40, 39, 0.4);
+  z-index: 10;
+  transform: scale(1.02);
+}
+
+@keyframes progress-bar-stripes {
+  from {
+    background-position: 1rem 0;
+  }
+
+  to {
+    background-position: 0 0;
+  }
+}
+
+/* ─── Lesson card: highlighted + pinned + multi-slot ─── */
+
+.lesson-card.highlighted {
+  outline: 2px solid #f97316;
+  box-shadow: 0 0 0 4px rgba(249, 115, 22, .15);
+}
+
+.lesson-card.pinned {
+  border-left: 3px solid #a81f1e;
+}
+
+.lesson-card.multi-slot {
+  align-self: stretch;
+}
+
+/* ─── Animations ─── */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  from {
+    opacity: .7;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* Required = yellow left border */
+
+.lesson-card.required {
+  border-left: 3px solid #f59e0b;
+  background: linear-gradient(135deg, #fffbeb 0%, #fff 100%);
+}
+
+.lesson-card.required .lesson-major {
+  background: #fde68a;
+  color: #78350f;
+}
+
+/* Elective = blue left border */
+
+.lesson-card.elective {
+  border-left: 3px solid #60a5fa;
+  background: linear-gradient(135deg, #eff6ff 0%, #fff 100%);
+}
+
+.lesson-card.elective .lesson-major {
+  background: #bfdbfe;
+  color: #1e3a5f;
+}
+
+/* Shared course = dashed orange border + badge */
+
+.lesson-card.shared {
+  border-style: dashed;
+  border-color: #fb923c;
+}
+
+/* Shared badge */
+
+.lesson-shared-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 800;
+  background: #fed7aa;
+  color: #c2410c;
+  letter-spacing: 0.3px;
+}
+
+/* Day host: transparent overlay spanning all period rows for one day */
+
+.schedv2-day-host {
+  pointer-events: none;
+  /* let drop cells beneath handle events */
+  overflow: visible;
+}
+
+/* Thanh mau gon (thay cho the day chu) - toi uu dien tich toi da, khong gioi
+   han so cot/ngay nua vi thanh mau van dung duoc du hep den may px (khac
+   the co chu, chu bi cat thi vo nghia). Xem chi tiet khi di chuot vao (xem
+   .lesson-popover). */
+
+.lesson-bar {
+  width: 100%;
+  height: 100%;
+  min-height: 6px;
+  border-radius: 4px;
+  box-sizing: border-box;
+  cursor: pointer;
+  transition: filter .12s ease, opacity .15s ease;
+}
+
+.lesson-bar:hover {
+  filter: brightness(1.12);
+}
+
+.lesson-bar.highlighted {
+  outline: 3px solid #dc2626;
+  outline-offset: 1px;
+  z-index: 20;
+}
+
+/* Che do "chim nen": chi bat khi CO buoi dang duoc to sang. Cac buoi khac mo lai
+   + giam bao hoa nen khoi can xem noi hang len ma khong phai doi mau no. */
+
+.schedv2-grid-table.has-highlight .lesson-bar:not(.highlighted) {
+  opacity: .2;
+  filter: saturate(.3);
+}
+
+/* Van cho hover ro lai de con tra cuu duoc buoi bi chim. */
+
+.schedv2-grid-table.has-highlight .lesson-bar:not(.highlighted):hover {
+  opacity: .75;
+  filter: saturate(.85) brightness(1.05);
+}
+
+.schedv2-grid-table.has-highlight .lesson-bar.highlighted {
+  box-shadow: 0 3px 12px rgba(220, 38, 38, .35);
+}
+
+.lesson-bar.dimmed {
+  opacity: .55;
+}
+
+.tt-close-btn {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.tt-close-btn:hover {
+  color: #f1f5f9;
+}
+
+.tt-hint {
+  margin-top: 8px;
+  font-size: 10px;
+  color: #64748b;
+  text-align: center;
+}
+
+/* Popup chi tiet khi hover 1 thanh mau - dung position:fixed + createPortal
+   (khong dung CSS ":hover" thuan) vi cac thanh nam trong .schedv2-grid-wrap
+   co overflow-x:auto -> se bi cat mat neu dinh vi bang position:absolute
+   trong cay DOM binh thuong. Tai su dung nguyen bo mau/chu ".tt-*" tu ban
+   FE_SCHEDULE goc, chi doi phan dinh vi. */
+
+.lesson-popover {
+  position: fixed;
+  width: 300px;
+  background: #1e293b;
+  color: #f1f5f9;
+  border-radius: 10px;
+  padding: 14px 16px;
+  z-index: 9999;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  pointer-events: auto;
+}
+
+.lesson-popover::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 50%;
+  margin-top: -6px;
+  width: 12px;
+  height: 12px;
+  background: #1e293b;
+  transform: rotate(45deg);
+  border-radius: 2px;
+}
+
+.lesson-popover.flip-left::before {
+  left: auto;
+  right: -6px;
+}
+
+.lesson-popover .tt-reject-btn {
+  margin-top: 10px;
+  width: 100%;
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid #dc2626;
+  background: transparent;
+  color: #fca5a5;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lesson-popover .tt-reject-btn:hover {
+  background: rgba(220, 38, 38, .15);
+}
+
+/* When lesson card is inside the absolute wrapper, fill it fully */
+
+.schedv2-lesson-abs .lesson-card {
+  height: 100%;
+  min-height: unset;
+  margin: 0;
+  border-radius: 5px;
+  overflow: visible;
+}
+
+/* Kéo thả: Ẩn triệt để tooltip và làm mờ card đang kéo */
+
+.schedv2.is-dragging .lesson-tooltip {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+.lesson-card.dragging {
+  opacity: 0.4;
+}
+
+/* UI/UX polish: shell, accessibility, tables, and responsive scheduling */
+
+html {
+  min-width: 320px;
+}
+
+body {
+  line-height: 1.45;
+}
+
+button,
+input,
+select {
+  min-width: 0;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid #f59e0b;
+  outline-offset: 2px;
+}
+
+.schedv2-grid-wrap {
+  overflow-x: auto;
+}
+
+.schedv2-grid-table {
+  min-width: 860px;
+}
+
+.schedv2-grid-cell.day,
+.schedv2-grid-cell.time {
+  color: #1f2937;
+}
+
+.schedv2-grid-cell.body.occupied-target {
+  background: #f8fafc;
+}
+
+.schedv2-grid-cell.body.drop-target.occupied-target {
+  background: #fff7ed !important;
+  outline-color: #f97316 !important;
+}
+
+.lesson-card .lesson-remove {
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, .18);
+  color: #64748b;
+}
+
+.lesson-card .lesson-remove:hover {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.lesson-card.grid {
+  border-color: #cbd5e1;
+}
+
+.lesson-card.required,
+.lesson-card.grid.required,
+.lesson-card.pending.required {
+  border: 1px solid #fbbf24;
+  border-left-width: 4px;
+  background: linear-gradient(135deg, #fffbeb 0%, #ffffff 86%);
+  box-shadow: none;
+  box-sizing: border-box;
+}
+
+.lesson-card.elective,
+.lesson-card.grid.elective,
+.lesson-card.pending.elective {
+  border: 1px solid #93c5fd;
+  border-left-width: 4px;
+  background: linear-gradient(135deg, #eff6ff 0%, #ffffff 86%);
+  box-shadow: none;
+  box-sizing: border-box;
+}
+
+.lesson-card.grid.required {
+  border-color: #f59e0b;
+  border-left-width: 3px;
+}
+
+.lesson-card.grid.elective {
+  border-color: #3b82f6;
+  border-left-width: 3px;
+}
+
+.lesson-card.required .lesson-major {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.lesson-card.elective .lesson-major {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.lesson-card.shared {
+  border-style: dashed;
+}
+
+.lesson-card.highlighted {
+  outline: 3px solid #dc2626;
+  outline-offset: 2px;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, .18);
+  z-index: 20;
+}
+
+.lesson-card.grid strong,
+.lesson-card.grid .lesson-teacher {
+  letter-spacing: 0;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  min-width: 640px;
+}
+
+/* Dong phan nhom theo Thu trong LessonTable (chi dung khi sort theo "time")
+   - muon tu file tham khao xep_tkb_FATE_HK1_2026-2027.html (".daysep"). */
+
+.data-table tr.daysep td {
+  background: #eef1f5;
+  font-weight: 700;
+  color: #374151;
+  font-size: 12px;
+  padding: 6px 12px;
+}
+
+.data-table th,
+.data-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e5e7eb;
+  vertical-align: top;
+}
+
+.data-table th {
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+}
+
+.schedv2-panel.pending-panel.drop-target {
+  background: #fff7ed;
+  border-color: #f59e0b;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ag-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes ag-star-pop {
+  0% { transform: scale(0.5); }
+  60% { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+
+.xc-strip-cell.d0 { background: #f5f5f4; }
+
+.xc-strip-cell.d1 { background: var(--xc-d1); color: #0b0b0b; }
+
+.xc-strip-cell.d2 { background: var(--xc-d2); }
+
+.xc-strip-cell.d3 { background: var(--xc-d3); }
+
+.xc-strip-cell.d4 { background: var(--xc-d4); }
+
+/* Thang 5 bac, mot hue blue, da chay
+   scripts/validate_palette.js "#86b6ef,#5598e7,#2a78d6,#184f95,#0d366b"
+   --ordinal --surface #ffffff --mode light  ->  ALL CHECKS PASS
+   (light-end 2.11:1, moi khoang ΔL >= 0.06, hue spread 4°).
+   5 la TOI DA: them bac thu 6 thi hai buoc cuoi chi cach nhau ΔL 0.047.
+   DOI GIA TRI THI PHAI CHAY LAI VALIDATOR. */
+
+.wkgrid,
+.wkgrid-legend {
+  --d1: #86b6ef;
+  --d2: #5598e7;
+  --d3: #2a78d6;
+  --d4: #184f95;
+  --d5: #0d366b;
+  --d0: #f5f5f4;
+}
+
+.wkgrid {
+  border-collapse: separate;
+  border-spacing: 2px; /* khe nen 2px giua cac o, khong ve vien quanh mark */
+  font-size: 11px;
+}
+
+.wkgrid thead th {
+  font-size: 10px;
+  color: var(--tkb-muted);
+  font-weight: 600;
+  min-width: 22px;
+  font-variant-numeric: tabular-nums;
+}
+
+.wkgrid tbody th {
+  font-size: 10px;
+  color: var(--tkb-muted);
+  font-weight: 600;
+  text-align: right;
+  padding-right: 6px;
+  white-space: nowrap;
+}
+
+.wkgrid td {
+  width: 22px;
+  height: 20px;
+  border-radius: 3px;
+  background: var(--d0);
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+.wkgrid td.d1 { background: var(--d1); color: #0b0b0b; }
+
+.wkgrid td.d2 { background: var(--d2); }
+
+.wkgrid td.d3 { background: var(--d3); }
+
+.wkgrid td.d4 { background: var(--d4); }
+
+.wkgrid td.d5 { background: var(--d5); }
+
+.wkgrid-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--tkb-muted);
+  flex-wrap: wrap;
+}
+
+.wkgrid-legend-label {
+  font-weight: 600;
+  color: var(--ink2);
+}
+
+.wkgrid-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.wkgrid-legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+  background: var(--d0);
+}
+
+.wkgrid-legend-swatch.d1 { background: var(--d1); }
+
+.wkgrid-legend-swatch.d2 { background: var(--d2); }
+
+.wkgrid-legend-swatch.d3 { background: var(--d3); }
+
+.wkgrid-legend-swatch.d4 { background: var(--d4); }
+
+.wkgrid-legend-swatch.d5 { background: var(--d5); }
+
+/* ==========================================================================
+   Gio da bao cua 1 giang vien (.rh) - trong man "Tra cuu theo giang vien"
+   ========================================================================== */
+
+.rh-panel {
+  background: var(--paper);
+  border: 1px solid var(--line-light);
+  border-radius: var(--tkb-radius);
+  box-shadow: var(--shadow);
+  padding: 14px;
+}
+
+.nav-density-wrap { overflow-x: auto; padding-bottom: 2px; }
+
+/* O trong bang mat do la NUT bam - vung bam phu kin ca o. */
+
+.nav-density-grid td { padding: 0; }
+
+.nav-density-cell {
+  width: 100%;
+  height: 100%;
+  min-height: 20px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.nav-density-cell:disabled { cursor: default; }
+
+.nav-density-grid td.picked {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+
+.pi-group.clash     .pi-group-hd { color: #991b1b; }
+
+.pi-group.duplicate .pi-group-hd { color: #6b21a8; }
+
+.pi-group.unplaced  .pi-group-hd { color: #9a3412; }
+
+.pi-group.missing   .pi-group-hd { color: #475569; }
+
+.pi-group.clash     .pi-row-wrap { border-left-color: var(--red); }
+
+.pi-group.duplicate .pi-row-wrap { border-left-color: #a855f7; }
+
+.pi-group.unplaced  .pi-row-wrap { border-left-color: var(--orange); }
+
+.pi-group.missing   .pi-row-wrap { border-left-color: #64748b; }
+
+/* ---- Khoi "van de" trong popover cua the buoi hoc ----
+   Thanh mau do bao co van de; khoi nay tra loi "van de gi". */
+
+.tt-problems {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 2px;
+}
+
+.tt-problem {
+  border-radius: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.tt-problem.clash { background: var(--red-bg);    border-color: #fecaca; }
+
+.tt-problem.duplicate { background: #f5f3ff;          border-color: #ddd6fe; }
+
+.tt-problem.unplaced { background: var(--orange-bg); border-color: #fed7aa; }
+
+.tt-problem.missing { background: #f6f7f9;          border-color: #e2e8f0; }
+
+.tt-problem-hd {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.tt-problem.clash     .tt-problem-hd { color: #991b1b; }
+
+.tt-problem.duplicate .tt-problem-hd { color: #6b21a8; }
+
+.tt-problem.unplaced  .tt-problem-hd { color: #9a3412; }
+
+.tt-problem.missing   .tt-problem-hd { color: #475569; }
+
+.tt-problem-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+.tt-problem-body {
+  font-size: 12px;
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+.tt-problem-body strong { font-weight: 700; }
+
+.tt-problem-fix {
+  font-size: 11px;
+  color: var(--tkb-muted);
+  margin-top: 3px;
+  line-height: 1.45;
+}
+
+.tt-problem-btn {
+  margin-top: 7px;
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  border-radius: 5px;
+  padding: 5px 8px;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--tkb-accent);
+  cursor: pointer;
+}
+
+.tt-problem-btn:hover { background: var(--accent-bg); }
+
+/* Trong tung the: luoi ben trai, chu giai ben phai - dung not cho trong thay vi
+   day chu giai xuong mot hang rieng. */
+
+.nav-density-body {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.nav-density-body .wkgrid-legend {
+  margin-top: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.rh-panel .wkgrid-legend { margin-top: 8px; }
+
+/* O luoi / dong bang thuoc mot vu trung gio: doi han sang mau canh bao, khong
+   dung thang mat do. Luon di kem chu "trung gio" nen nghia khong phu thuoc mau. */
+
+.wkgrid td.clash {
+  background: var(--red) !important;
+  color: #fff;
+}
+
+.wkgrid-legend-swatch.clash { background: var(--red); }
+
+.sq-chip.clash {
+  background: var(--red-bg);
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+
+/* ---- Luoi o che do chi tiet: khung cuon rieng + header dinh ---- */
+
+.schedv2-grid-wrap.detailed {
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  /* Neo cho position:sticky ben trong: sticky bam vao chinh khung cuon nay. */
+  position: relative;
+}
+
+.schedv2-grid-table.detailed {
+  width: max-content;   /* cho phep rong hon man hinh -> cuon ngang */
+  min-width: 100%;
+  border-radius: 0;
+  border: 0;
+}
+
+/* Hang ngay dinh tren, cot tiet dinh trai. Nen phai DAC (khong trong suot) vi
+   the buoi hoc se truot ben duoi khi cuon. */
+
+.schedv2-grid-table.detailed > .schedv2-grid-cell.day {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #eef2f7;
+  border-bottom: 1px solid #cbd5e1;
+}
+
+.schedv2-grid-table.detailed > .schedv2-grid-cell.time {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: #f8fafc;
+  border-right: 1px solid #cbd5e1;
+}
+
+/* Nhan ngay bam theo be ngang trong chinh cot cua no.
+   O che do chi tiet, mot ngay co the rong vai nghin px (moi buoi chong gio la
+   mot cot con 180px). Nhan canh giua cot thi khi cuon ngang toi dau ngay hay
+   cuoi ngay no da troi ra ngoai khung nhin - dung luc vua nhay toi mot buoi
+   loi thi khong con biet dang xem thu may.
+   left: 70px = be rong cot "Tiết" dang dinh trai (gridTemplateColumns trong
+   LessonGridBoard.jsx), de nhan khong chui xuong duoi cot do. */
+
+.schedv2-grid-table.detailed > .schedv2-grid-cell.day {
+  justify-content: flex-start;
+  padding-left: 0;
+}
+
+.schedv2-grid-table.detailed > .schedv2-grid-cell.day > span {
+  position: sticky;
+  left: 70px;
+  padding: 0 8px;
+}
+
+/* O goc phai nam tren ca hai. */
+
+.schedv2-grid-table.detailed > .schedv2-grid-cell.time:first-child {
+  top: 0;
+  z-index: 4;
+}
+
+/* The buoi hoc phai nam DUOI header khi cuon qua. */
+
+.schedv2-grid-table.detailed .schedv2-day-host { z-index: 1; }
+
+/* ---- The o che do chi tiet ----
+   Ba nguyen tac: (1) noi dung dong thanh mot khoi o DINH the, khong dan ra hai
+   dau; (2) vien phai thay duoc - nen the qua nhat tren nen trang thi mat khong
+   tach duoc ranh gioi; (3) duong ke luoi lui ve sau de the noi len nhu vat the. */
+
+.lesson-bar.detailed {
+  border-radius: 6px;
+  padding: 5px 8px 4px;
+  overflow: hidden;
+  display: block;
+  text-align: left;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .07);
+}
+
+.lesson-bar.detailed:hover {
+  filter: none;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, .16);
+}
+
+.lb-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  height: 100%;
+  overflow: hidden;
+}
+
+.lb-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lb-code {
+  font-size: 10px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  opacity: .75;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+
+.lb-warn {
+  background: var(--red);
+  color: #fff;
+  border-radius: 50%;
+  width: 13px;
+  height: 13px;
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  font-weight: 800;
+  flex: none;
+}
+
+.lb-room {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .03em;
+  opacity: .6;
+  flex: none;
+}
+
+.lb-course {
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.lb-teacher {
+  font-size: 10px;
+  opacity: .8;
+  line-height: 1.25;
+  margin-top: 1px;
+  /* Ten GV dai (hoc ham/hoc vi day) truoc day bi cat "..." mat het phan ho ten -
+     nay cho XUONG DONG toi da 2 dong, giong cach .lb-course da lam, thay vi cat
+     chu. The 1 tiet qua thap thi phan du van bi .lb-body overflow:hidden cat -
+     danh doi chap nhan duoc, con hon cat mat ten. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Neo o day the - de the cao khong bi trong khong ma van hieu vi sao no cao. */
+
+.lb-dur {
+  margin-top: auto;
+  align-self: flex-end;
+  font-size: 9px;
+  opacity: .5;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The 1 tiet (66px) khong du cho dong "n tiet" - an di, do dai da hien nhien. */
+
+.lesson-bar.detailed[data-short="1"] .lb-dur { display: none; }
+
+/* BUG DA SUA: ban truoc ke vach ngay bang border-left cua .schedv2-day-host -
+   nhung day-host CHI duoc tao cho ngay nao co >= 1 buoi hoc
+   (Object.entries(byDay) trong LessonGridBoard.jsx), nen ngay trong (Thu 4,
+   Thu 5 trong anh vd) khong co buoi thi KHONG co day-host -> mat vach hoan
+   toan. Doan lai o ranh gioi thi bi lech: vach chi con lai mau 2px ngan o
+   HANG TIEU DE (tu border-right cua .schedv2-grid-cell.day, cao dung 36px,
+   khong noi xuong than bang).
+   Sua: ke ngay tren CHINH O THAN BANG (.schedv2-grid-cell.body) - o nay LUON
+   duoc ve du cho moi (ngay, tiet), khong phu thuoc ngay do co buoi hay khong
+   (xem vong lap Array.from({length:slotsPerDay},...) trong LessonGridBoard.jsx).
+   slotsPerDay o lien tiep theo cung 1 cot se noi thanh 1 duong lien tuc tu
+   dinh xuong day, khop dung voi vach 2px cua hang tieu de ben tren. */
+
+.schedv2-grid-table.detailed .schedv2-grid-cell.body {
+  border-right: 2px solid #cbd5e1;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.schedv2-grid-table.detailed .schedv2-grid-cell.day {
+  border-right: 2px solid #cbd5e1;
+}
+
+/* ==========================================================================
+   KEO-THA SUA TAY (buoc 5) - chi hoat dong o che do chi tiet (toan man hinh).
+   Dat ten rieng sv-drop-cell/sv-drag-over, KHONG dung lai .drop-target/.drag-over
+   cu (FE_SCHEDULE clone) - cac lop do gan mau NEN CO DINH cho MOI o bat ky khi
+   nao co class, trong khi o day toi chi muon to o dang keo QUA, khong to san
+   toan bo luoi khi chua keo gi.
+   ========================================================================== */
+
+.sv-drop-cell {
+  transition: background .1s, outline-color .1s;
+}
+
+.sv-drag-over {
+  background: var(--accent-bg) !important;
+  outline: 2px dashed var(--tkb-accent);
+  outline-offset: -2px;
+}
+
+/* Ghim tren the (che do chi tiet) */
+
+.lb-pin {
+  font-size: 9px;
+  line-height: 1;
+}
+
+/* Khoi "da ghim" trong popover the */
+
+.tt-pin-box {
+  margin: 8px 0 2px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.tt-pin-box.warn {
+  background: var(--orange-bg);
+  border-color: #fed7aa;
+}
+
+.tt-pin-head {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--ink2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tt-pin-failed {
+  font-weight: 600;
+  color: #9a3412;
+}
+
+.tt-pin-reason {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--ink);
+  font-style: italic;
+}
+
+.tt-pin-conflict {
+  margin-top: 3px;
+  font-size: 11px;
+  color: #9a3412;
+}
+
+.tt-unpin-btn {
+  margin-top: 8px;
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  border-radius: 5px;
+  padding: 5px 8px;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #9a3412;
+  cursor: pointer;
+}
+
+.tt-unpin-btn:hover {
+  background: var(--orange-bg);
+}
+
+/* The dang pendingSave (chua luu) tren luoi - vien net dut de phan biet voi the
+   da luu thuc su (vien lien nhu binh thuong). */
+
+.lesson-bar.pending-save {
+  outline: 2px dashed var(--tkb-accent);
+  outline-offset: 1px;
+}
+
+.sq-state.warn { background: var(--orange-bg); color: #9a3412; }
+
+.manual-toolbar-note.warn {
+  color: #b91c1c;
+}
+
+/* ---- Bang mirror dung layout file Excel goc (header gop 3 dong, o hoc phan
+   merge-xuong bang rowSpan) - font nho + khong dam, luoi ke day, cuon ngang/doc. ---- */
+
+.xls-scroll {
+  /* CHI cuon NGANG. Bang mirror 29 cot chac chan rong hon man hinh nen phai co
+     overflow-x, nhung KHONG dat max-height/overflow-y nua.
+
+     Ban truoc ep max-height:72vh de bang tu cuon doc, vi shell CU
+     (.page{min-height:100vh}) khong ep duoc chieu cao that cho chuoi flex ben
+     tren -> nhieu lop se day ca TRANG cao ra thay vi cuon trong bang. Shell MOI
+     (AppLayout) da co <main> voi overflow-y-auto lo viec cuon doc cho toan bo
+     noi dung, nen giu them mot vung cuon doc long ben trong chi tao ra hai thanh
+     cuon chong nhau - nguoi dung phai doan cai nao dang dieu khien cai gi.
+
+     KHONG co vien/bo goc rieng: bang nay nam sat mep trong the card cua
+     ManualEntryPage (card da co vien + bo goc, thanh cong cu ngan bang border-b).
+     Them mot lop vien nua thanh hop-trong-hop. Card do phai co overflow-hidden
+     de goc vuong cua bang khong tho ra ngoai goc bo tron cua card. */
+  overflow-x: auto;
+}
+
+.xls-table {
+  border-collapse: collapse;
+  font-size: 10px;
+  white-space: nowrap;
+  width: max-content;
+  min-width: 100%;
+}
+
+.xls-table th,
+.xls-table td {
+  border: 1px solid #d5dbe3;
+  padding: 2px 5px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.xls-table thead th {
+  background: #eef1f6;
+  color: #334155;
+  font-weight: 600;
+  text-align: center;
+  white-space: normal;
+  min-width: 56px;
+}
+
+.xls-table tbody tr.xls-row {
+  cursor: pointer;
+}
+
+/* ─── Phan vung khi hover: hai cap ───────────────────────────────────
+   Moi hoc phan la MOT <tbody> rieng (xem ghi chu trong ManualEntryPage).
+
+   1. Hover bat ky dong nao -> ca VUNG hoc phan sang nhe: thay ngay khoi
+      merge-xuong nay gom nhung lop nao.
+   2. Rieng DONG dang tro -> dam hon, de van biet minh dang nham dong nao.
+
+   O merge (.xls-course) CHI an theo mau vung, KHONG an theo mau dong -
+   day la muc chot. Truoc day rule hover dat tren <tr> keo theo ca o merge
+   cao 7 dong (chung thuoc ve dong DAU nhom), tao vet mau hinh chu L khong
+   doc duoc dang tro vao dau. */
+.xls-table tbody:hover td {
+  background: #fdf5f5;
+}
+
+.xls-table tbody tr.xls-row:hover td:not(.xls-course) {
+  background: #f9e3e3;
+}
+
+/* Vien tren tach hai NHOM HOC PHAN ke nhau - doc duoc ranh gioi ca khi khong
+   hover. Chi 1px, bu lai bang mau dam hon vien luoi thuong (#94a3b8 so voi
+   #d5dbe3): vien cang day cang de bi rang cua khi zoom le, ma o day 1px da du
+   vi con co o merge va nen vung cung danh dau nhom. */
+.xls-table tbody + tbody td {
+  border-top: 1px solid #94a3b8;
+}
+
+/* ─── Chia bang theo FORM bang NEN ───────────────────────────────────
+   Bang nay mo BA form khac nhau tuy o duoc bam (xem openCourse/openTeacher/
+   openSection trong ManualEntryPage), truoc do khong co dau hieu nao bao ranh
+   gioi - bam vao roi moi biet mo nham form.
+
+   Ban dau dung vach doc 2px. Bo, vi vien bi RANG CUA khi nguoi dung zoom le:
+   chieu cao moi o ra so thap phan, tung o lam tron mot kieu nen vach trong nhu
+   dut khuc. Ma bang 29 cot thi zoom nho lai chinh la phan xa tu nhien. Nen thi
+   khong co vien de lam tron -> dung vung o moi muc zoom.
+
+   Vung "Lop hoc phan" CO Y de tran: no chiem da so cot, to nen ca thi bang
+   thanh nang va mat tac dung phan biet. */
+.xls-table {
+  --xls-z-course: #eef3f8; /* Hoc phan - lam slate */
+  --xls-z-teacher: #f5f1fa; /* Giang vien - lam tim nhat */
+}
+
+.xls-table tbody .xls-z-course {
+  background: var(--xls-z-course);
+}
+
+.xls-table tbody .xls-z-teacher {
+  background: var(--xls-z-teacher);
+}
+
+/* Header dam hon than bang mot bac - de nhin hang tieu de la doc duoc ngay
+   bang chia lam may vung, khong phai doi luot mat xuong du lieu. */
+.xls-table thead .xls-z-course {
+  background: #dde8f2;
+}
+
+.xls-table thead .xls-z-teacher {
+  background: #e9e1f6;
+}
+
+/* O mau trong chu giai - dung CHUNG bien mau voi bang, doi mau vung la chu
+   giai tu doi theo, khong lech nhau. */
+.xls-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #fff;
+}
+
+.xls-swatch.xls-z-course {
+  background: var(--xls-z-course, #eef3f8);
+}
+
+.xls-swatch.xls-z-teacher {
+  background: var(--xls-z-teacher, #f5f1fa);
+}
+
+/* Nen cua o merge do `.xls-z-course` lo (xem khoi "chia bang theo FORM" ben
+   duoi), o day chi con lo trinh bay. */
+.xls-table td.xls-course {
+  font-weight: 500;
+  vertical-align: top;
+  white-space: normal;
+  min-width: 130px;
+}
+
+.xls-table tbody:hover td.xls-course {
+  background: #fbeaea;
+}
+
+/* Cot "GV ky truoc (de doi chieu)" - to mau do nhat nhu file Excel goc, danh
+   dau ro day la du lieu THAM KHAO, khong dung de xep lich. */
+
+.xls-table td.xls-ref,
+.xls-table th.xls-ref-head {
+  color: #b91c1c;
+}
+
+.sed-table tbody tr.sed-row {
+  cursor: pointer;
+}
+
+.sed-table tbody tr.sed-row:hover {
+  background: var(--accent-bg);
+}
+
+/* .tav-wkgrid / .tav-free da bo: trang "Giờ rảnh GV" chuyen tu luoi CHI DE XEM
+   sang SubmissionWindowGrid (Tailwind thuan) de khai/sua duoc gio. */

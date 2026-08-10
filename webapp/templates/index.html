@@ -1,0 +1,1735 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <title>Demo xep TKB - Thinh giang truoc, co huu sau (CP-SAT)</title>
+    <style>
+      :root {
+        --bg: #0f1420;
+        --panel: #171d2e;
+        --panel2: #1e2536;
+        --text: #e6e9f0;
+        --muted: #8891a7;
+        --accent: #4f8cff;
+        --guest: #4f8cff;
+        --resident: #35c58a;
+        --warn: #ffb454;
+        --danger: #ff5d6c;
+        --border: #2a3148;
+        --sidebar-w: 250px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          sans-serif;
+        margin: 0;
+        display: flex;
+      }
+
+      /* ===== SIDEBAR ===== */
+      #sidebar {
+        width: var(--sidebar-w);
+        flex-shrink: 0;
+        background: #0c101a;
+        border-right: 1px solid var(--border);
+        height: 100vh;
+        position: sticky;
+        top: 0;
+        overflow-y: auto;
+        padding: 18px 0;
+      }
+      #sidebar h1 {
+        font-size: 14.5px;
+        margin: 0 18px 4px;
+        line-height: 1.35;
+      }
+      #sidebar .subtitle {
+        font-size: 11px;
+        color: var(--muted);
+        margin: 0 18px 18px;
+        line-height: 1.4;
+      }
+      .navGroup {
+        margin-bottom: 6px;
+      }
+      .navGroupLabel {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #545e78;
+        padding: 10px 18px 4px;
+      }
+      .navItem {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 9px 18px;
+        font-size: 13px;
+        color: var(--muted);
+        cursor: pointer;
+        border-left: 3px solid transparent;
+      }
+      .navItem:hover {
+        background: var(--panel2);
+        color: var(--text);
+      }
+      .navItem.active {
+        background: var(--panel2);
+        color: var(--text);
+        border-left-color: var(--accent);
+        font-weight: 600;
+      }
+      .navItem .badge {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 100px;
+        font-size: 10.5px;
+        padding: 1px 7px;
+        color: var(--muted);
+      }
+      .navItem.active .badge {
+        color: var(--text);
+      }
+      .navItem .badge.warn {
+        background: rgba(255, 180, 84, 0.18);
+        color: var(--warn);
+        border-color: transparent;
+      }
+      .navItem[disabled] {
+        opacity: 0.4;
+        pointer-events: none;
+      }
+
+      /* ===== MAIN ===== */
+      #main {
+        flex: 1;
+        padding: 26px 34px;
+        max-width: 1100px;
+      }
+      .screen {
+        display: none;
+      }
+      .screen.active {
+        display: block;
+      }
+      h2.pageTitle {
+        font-size: 19px;
+        margin: 0 0 6px;
+      }
+      .pageDesc {
+        color: var(--muted);
+        font-size: 13px;
+        margin-bottom: 20px;
+        line-height: 1.5;
+      }
+      h3.sectionTitle {
+        font-size: 12.5px;
+        margin: 0 0 10px;
+        color: var(--muted);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 18px 20px;
+        margin-bottom: 18px;
+      }
+      .grid-form {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 10px 16px;
+      }
+      label {
+        display: block;
+        font-size: 11px;
+        color: var(--muted);
+        margin-bottom: 3px;
+      }
+      input[type="number"] {
+        width: 100%;
+        background: var(--panel2);
+        border: 1px solid var(--border);
+        color: var(--text);
+        border-radius: 6px;
+        padding: 6px 8px;
+        font-size: 13px;
+      }
+      button {
+        background: var(--accent);
+        color: white;
+        border: none;
+        border-radius: 7px;
+        padding: 9px 16px;
+        font-size: 13px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      button:hover {
+        filter: brightness(1.1);
+      }
+      button.secondary {
+        background: var(--panel2);
+        border: 1px solid var(--border);
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-top: 12px;
+      }
+      .stat-cards {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-top: 14px;
+      }
+      .stat-card {
+        background: var(--panel2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px 16px;
+        min-width: 120px;
+      }
+      .stat-card .num {
+        font-size: 22px;
+        font-weight: 700;
+      }
+      .stat-card .lbl {
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+      .pill {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 100px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .pill.guest {
+        background: rgba(79, 140, 255, 0.18);
+        color: var(--guest);
+      }
+      .pill.resident {
+        background: rgba(53, 197, 138, 0.18);
+        color: var(--resident);
+      }
+      .pill.warn {
+        background: rgba(255, 180, 84, 0.18);
+        color: var(--warn);
+      }
+      .pill.ok {
+        background: rgba(53, 197, 138, 0.18);
+        color: var(--resident);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 6px 10px;
+        border-bottom: 1px solid var(--border);
+        vertical-align: top;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 600;
+        font-size: 11px;
+        text-transform: uppercase;
+      }
+      tbody tr:hover {
+        background: var(--panel2);
+      }
+      .scroll-box {
+        max-height: 420px;
+        overflow-y: auto;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+      .heatmaps {
+        display: flex;
+        gap: 24px;
+        flex-wrap: wrap;
+      }
+      .heatmap table {
+        border-collapse: separate;
+        border-spacing: 3px;
+      }
+      .heatmap td.cell {
+        width: 46px;
+        height: 30px;
+        text-align: center;
+        border-radius: 4px;
+        font-size: 11px;
+        border: none;
+        color: #0b0f18;
+        font-weight: 700;
+      }
+      .heatmap th {
+        text-align: center;
+      }
+      .empty-hint {
+        color: var(--muted);
+        font-size: 12.5px;
+        padding: 10px 2px;
+      }
+      .btn-reject {
+        background: var(--danger);
+        padding: 4px 10px;
+        font-size: 11px;
+      }
+      .log {
+        font-family: ui-monospace, Consolas, monospace;
+        font-size: 11.5px;
+        color: var(--muted);
+        white-space: pre-wrap;
+        margin-top: 8px;
+      }
+      a {
+        color: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <nav id="sidebar">
+      <h1>Demo xếp TKB</h1>
+      <div class="subtitle">Thỉnh giảng ưu tiên trước, cơ hữu sau — CP-SAT</div>
+
+      <div class="navGroup">
+        <div class="navGroupLabel">Dữ liệu đầu vào</div>
+        <div
+          class="navItem active"
+          data-screen="config"
+          onclick="showScreen('config')"
+        >
+          1. Cấu hình &amp; sinh dữ liệu
+        </div>
+        <div
+          class="navItem"
+          data-screen="faculty"
+          onclick="showScreen('faculty')"
+        >
+          2. Khoa &amp; điều phối viên
+        </div>
+        <div
+          class="navItem"
+          data-screen="conflict"
+          onclick="showScreen('conflict')"
+        >
+          3. Check trùng liên chương trình
+          <span class="badge" id="navBadgeConflict"></span>
+        </div>
+        <div
+          class="navItem"
+          data-screen="submissions"
+          onclick="showScreen('submissions')"
+        >
+          4. Khung giờ đã báo
+        </div>
+      </div>
+      <div class="navGroup">
+        <div class="navGroupLabel">Giải lịch</div>
+        <div
+          class="navItem"
+          data-screen="phase1"
+          onclick="showScreen('phase1')"
+        >
+          5. Giai đoạn 1 — Thỉnh giảng
+          <span class="badge warn" id="navBadgePhase1"></span>
+        </div>
+        <div
+          class="navItem"
+          data-screen="phase2"
+          onclick="showScreen('phase2')"
+        >
+          6. Giai đoạn 2 — Cơ hữu
+        </div>
+      </div>
+      <div class="navGroup">
+        <div class="navGroupLabel">Tra cứu</div>
+        <div
+          class="navItem"
+          data-screen="lookup"
+          onclick="showScreen('lookup')"
+        >
+          7. Tra cứu theo giảng viên
+        </div>
+        <div
+          class="navItem"
+          data-screen="eventlog"
+          onclick="showScreen('eventlog')"
+        >
+          Nhật ký thao tác
+        </div>
+      </div>
+    </nav>
+
+    <main id="main">
+      <!-- ================= 1. CAU HINH ================= -->
+      <div class="screen active" id="screen-config">
+        <h2 class="pageTitle">1. Cấu hình &amp; sinh dữ liệu</h2>
+        <div class="pageDesc">
+          Chỉnh thông số quy mô rồi bấm "Sinh dữ liệu" — quy mô mặc định bám
+          theo số liệu thật của 1 trường đại học (~230 GV, ~500 lớp học phần, tỉ
+          lệ 45% cơ hữu / 55% thỉnh giảng).
+        </div>
+        <div class="panel">
+          <h3 class="sectionTitle">Thông số</h3>
+          <div class="grid-form" id="paramForm">
+            <div>
+              <label>Số giảng viên</label
+              ><input
+                type="number"
+                id="numTeachers"
+                value="{{ default_params.numTeachers }}"
+              />
+            </div>
+            <div>
+              <label>% cơ hữu</label
+              ><input
+                type="number"
+                id="pctResident"
+                value="{{ default_params.pctResident }}"
+              />
+            </div>
+            <div>
+              <label>Số lớp học phần</label
+              ><input
+                type="number"
+                id="numSections"
+                value="{{ default_params.numSections }}"
+              />
+            </div>
+            <div>
+              <label>% lớp do thỉnh giảng dạy</label
+              ><input
+                type="number"
+                id="pctSectionsGuest"
+                value="{{ default_params.pctSectionsGuest }}"
+              />
+            </div>
+            <div>
+              <label>Số phòng LT (pool)</label
+              ><input
+                type="number"
+                id="ltPool"
+                value="{{ default_params.ltPool }}"
+              />
+            </div>
+            <div>
+              <label>Số phòng Lab (pool)</label
+              ><input
+                type="number"
+                id="labPool"
+                value="{{ default_params.labPool }}"
+              />
+            </div>
+            <div>
+              <label>Số ngày/tuần</label
+              ><input
+                type="number"
+                id="numDays"
+                value="{{ default_params.numDays }}"
+              />
+            </div>
+            <div>
+              <label>Số ca xung đột cố ý cấy</label
+              ><input
+                type="number"
+                id="numForcedConflicts"
+                value="{{ default_params.numForcedConflicts }}"
+              />
+            </div>
+            <div>
+              <label>% lớp đã nộp giờ sẵn (còn lại chờ nhập tay)</label
+              ><input
+                type="number"
+                id="pctPreSubmitted"
+                value="{{ default_params.pctPreSubmitted }}"
+              />
+            </div>
+            <div>
+              <label>Seed (để lặp lại được)</label
+              ><input
+                type="number"
+                id="seed"
+                value="{{ default_params.seed }}"
+              />
+            </div>
+          </div>
+          <div class="row">
+            <button onclick="generateData()">Sinh dữ liệu</button>
+            <span id="genStatus" class="log"></span>
+          </div>
+        </div>
+        <div class="panel">
+          <h3 class="sectionTitle">Hoặc nạp dữ liệu thật</h3>
+          <div style="font-size:12.5px; color:var(--muted); margin-bottom:10px;">
+            Nạp trực tiếp từ file kế hoạch giảng dạy thật (không dùng dữ liệu giả lập ở trên).
+            GV được phân loại cơ hữu/thỉnh giảng theo "Đơn vị công tác" (có "Việt Nhật" &rarr; cơ hữu).
+          </div>
+          <div class="row" style="margin-top:0;">
+            <button class="secondary" onclick="loadRealData('standard')">Nạp file CHUẨN (FATE.TKB.HK2_2025-2026.xlsx)</button>
+            <button class="secondary" onclick="loadRealData('legacy')">Nạp file cũ (FATE.TKB.HK1 2026-2027.xlsx)</button>
+            <span id="realDataStatus" class="log"></span>
+          </div>
+        </div>
+        <div class="panel">
+          <h3 class="sectionTitle">Kết quả sinh dữ liệu</h3>
+          <div id="dataSourceBadge"></div>
+          <div class="stat-cards" id="statCards">
+            <div class="empty-hint">Chưa sinh dữ liệu.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 2. KHOA / DPV ================= -->
+      <div class="screen" id="screen-faculty">
+        <h2 class="pageTitle">
+          2. Cơ cấu Khoa &rarr; Chương trình &rarr; Điều phối viên
+        </h2>
+        <div class="pageDesc">
+          Mỗi khoa có nhiều chương trình, mỗi chương trình 1 điều phối viên
+          riêng — đây là lý do 1 GV thỉnh giảng dạy liên chương trình có thể bị
+          2 điều phối viên khác nhau báo giờ (xem mục 3).
+        </div>
+        <div class="panel">
+          <div class="scroll-box">
+            <table id="facultyTable">
+              <thead>
+                <tr>
+                  <th>Khoa</th>
+                  <th>Số chương trình</th>
+                  <th>Tổng lớp</th>
+                  <th>Lớp thỉnh giảng</th>
+                  <th>Lớp cơ hữu</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 3. CHECK TRUNG ================= -->
+      <div class="screen" id="screen-conflict">
+        <h2 class="pageTitle">
+          3. "Check trùng" giữa các chương trình — trước khi giải
+        </h2>
+        <div class="pageDesc">
+          Đúng bước giáo vụ khoa làm khi nhận dữ liệu: với mỗi GV thỉnh giảng
+          dạy &ge;2 buổi ở &ge;2 chương trình khác nhau (mỗi chương trình 1 điều
+          phối viên báo giờ riêng), hệ thống thử mọi tổ hợp windows của CHÍNH GV
+          đó — xem có tồn tại cách xếp không trùng giờ hay không —
+          <b>trước khi</b> đưa vào CP-SAT giải toàn trường.
+        </div>
+        <div class="panel">
+          <div class="stat-cards" id="crossConflictStats"></div>
+        </div>
+        <div class="panel">
+          <div class="scroll-box">
+            <table id="crossConflictTable">
+              <thead>
+                <tr>
+                  <th>GV</th>
+                  <th>Các lớp / chương trình / điều phối viên báo giờ</th>
+                  <th>Kết quả check trùng</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 4. SUBMISSIONS ================= -->
+      <div class="screen" id="screen-submissions">
+        <h2 class="pageTitle">4. Khung giờ thỉnh giảng đã báo</h2>
+        <div class="pageDesc">
+          Dữ liệu đầu vào từ điều phối viên, trước khi giải — "khi giáo viên
+          đồng ý dạy, sẽ có những khung giờ có thể dạy được".
+        </div>
+
+        <div class="panel">
+          <h3 class="sectionTitle">
+            Điều phối viên nhập giờ dạy mới
+            <span
+              class="badge warn"
+              id="navBadgePending"
+              style="margin-left: 6px"
+            ></span>
+          </h3>
+          <div
+            style="font-size: 12.5px; color: var(--muted); margin-bottom: 10px"
+          >
+            Mô phỏng đúng bước "Điều phối viên nhập Giáo viên + Giờ có thể dạy"
+            — chọn 1 lớp thỉnh giảng chưa nộp, thêm các khung giờ GV đã đồng ý,
+            rồi bấm Nộp. Hệ thống check trùng ngay với các lớp khác của cùng GV
+            đó (nếu GV dạy liên chương trình) trước khi bạn kịp rời màn hình.
+          </div>
+          <div class="row" style="margin-top: 0">
+            <div style="flex: 1; min-width: 280px">
+              <label>Chọn lớp thỉnh giảng chưa nộp giờ</label>
+              <select
+                id="pendingSectionSelect"
+                style="
+                  width: 100%;
+                  background: var(--panel2);
+                  border: 1px solid var(--border);
+                  color: var(--text);
+                  border-radius: 6px;
+                  padding: 7px 8px;
+                  font-size: 13px;
+                "
+              ></select>
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label>Ngày</label>
+              <select
+                id="newWindowDay"
+                style="
+                  background: var(--panel2);
+                  border: 1px solid var(--border);
+                  color: var(--text);
+                  border-radius: 6px;
+                  padding: 6px 8px;
+                  font-size: 13px;
+                "
+              ></select>
+            </div>
+            <div>
+              <label>Tiết bắt đầu</label>
+              <select
+                id="newWindowPeriod"
+                style="
+                  background: var(--panel2);
+                  border: 1px solid var(--border);
+                  color: var(--text);
+                  border-radius: 6px;
+                  padding: 6px 8px;
+                  font-size: 13px;
+                "
+              ></select>
+            </div>
+            <button
+              class="secondary"
+              onclick="addWindowDraft()"
+              style="margin-top: 16px"
+            >
+              + Thêm khung giờ
+            </button>
+          </div>
+          <div id="windowDraftList" style="margin-top: 10px"></div>
+          <div class="row">
+            <button onclick="submitAvailability()">
+              Nộp giờ dạy cho lớp này
+            </button>
+            <span class="log" id="submitStatus"></span>
+          </div>
+          <div id="submitFeedback" style="margin-top: 12px"></div>
+        </div>
+
+        <div class="panel">
+          <h3 class="sectionTitle">Toàn bộ khung giờ đã nộp</h3>
+          <div class="row" style="margin-top: 0">
+            <div>
+              <label>Lọc theo mã GV (để trống = xem tất cả)</label>
+              <input
+                type="number"
+                id="filterTeacherId"
+                placeholder="vd: 172"
+                style="width: 160px"
+                oninput="renderSubmissions()"
+              />
+            </div>
+            <span class="log" id="submissionsCount"></span>
+          </div>
+          <div class="scroll-box" style="margin-top: 14px">
+            <table id="submissionsTable">
+              <thead>
+                <tr>
+                  <th>Section</th>
+                  <th>GV</th>
+                  <th>Chương trình (Khoa)</th>
+                  <th>Điều phối viên</th>
+                  <th>Phòng</th>
+                  <th>Khung giờ đã báo</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 5. GIAI DOAN 1 ================= -->
+      <div class="screen" id="screen-phase1">
+        <h2 class="pageTitle">5. Giai đoạn 1 — Xếp GV thỉnh giảng</h2>
+        <div class="pageDesc">
+          Giải riêng cho GV thỉnh giảng trước, khóa kết quả lại trước khi ghép
+          cơ hữu ở Giai đoạn 2.
+        </div>
+        <div class="panel">
+          <div class="row" style="margin-top: 0">
+            <button id="btnGuest" onclick="solveGuest()" disabled>
+              Xếp thỉnh giảng
+            </button>
+            <span id="guestStatus" class="log"></span>
+          </div>
+          <div class="stat-cards" id="guestStats"></div>
+        </div>
+
+        <div class="panel" id="guestUnplacedWrap" style="display: none">
+          <h3 class="sectionTitle">
+            Cần thương lượng lại (không xếp được với window hiện tại)
+          </h3>
+          <div class="scroll-box">
+            <table id="guestUnplacedTable">
+              <thead>
+                <tr>
+                  <th>Section</th>
+                  <th>GV</th>
+                  <th>Chương trình / ĐPV</th>
+                  <th>Window đã báo</th>
+                  <th>Nguyên nhân</th>
+                  <th>Đối chiếu các section khác cùng GV</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel" id="guestPlacedWrap" style="display: none">
+          <h3 class="sectionTitle">
+            Toàn bộ lịch thỉnh giảng đã xếp thành công
+          </h3>
+          <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px">
+            Bấm mã GV để tra nhanh lịch riêng người đó ở mục 7.
+          </div>
+          <div class="scroll-box">
+            <table id="guestPlacedTable">
+              <thead>
+                <tr>
+                  <th>Section</th>
+                  <th>GV</th>
+                  <th>Chương trình / ĐPV</th>
+                  <th>Phòng</th>
+                  <th>Giờ đã dùng</th>
+                  <th>Còn linh động (chưa dùng)</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 6. GIAI DOAN 2 ================= -->
+      <div class="screen" id="screen-phase2">
+        <h2 class="pageTitle">
+          6. Giai đoạn 2 — Ghép GV cơ hữu quanh phần đã khóa
+        </h2>
+        <div class="pageDesc">
+          Bấm "Từ chối" trên 1 đề xuất để mô phỏng GV cơ hữu không đồng thuận —
+          hệ thống tự luân chuyển sang giờ khác ngay lập tức.
+        </div>
+        <div class="panel">
+          <div class="row" style="margin-top: 0">
+            <button id="btnResident" onclick="solveResident()" disabled>
+              Xếp cơ hữu
+            </button>
+            <span id="residentStatus" class="log"></span>
+          </div>
+          <div class="stat-cards" id="residentStats"></div>
+        </div>
+
+        <div class="panel" id="heatmapWrap" style="display: none">
+          <h3 class="sectionTitle">Mức sử dụng phòng theo pool</h3>
+          <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px">
+            Số buổi đang chiếm dụng / tổng số phòng loại đó tại từng khung giờ.
+          </div>
+          <div class="heatmaps" id="heatmaps"></div>
+        </div>
+
+        <div class="panel" id="residentListWrap" style="display: none">
+          <h3 class="sectionTitle">Đề xuất giờ dạy cho GV cơ hữu</h3>
+          <div class="scroll-box">
+            <table id="residentTable">
+              <thead>
+                <tr>
+                  <th>Section</th>
+                  <th>GV</th>
+                  <th>Chương trình</th>
+                  <th>Phòng</th>
+                  <th>Giờ đề xuất</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 7. TRA CUU ================= -->
+      <div class="screen" id="screen-lookup">
+        <h2 class="pageTitle">7. Tra cứu lịch cụ thể theo giảng viên</h2>
+        <div class="pageDesc">
+          Bấm vào 1 GV trong danh sách để xem chi tiết — cả khung giờ đã báo
+          (đầu vào) lẫn giờ đã xếp (kết quả).
+        </div>
+
+        <div class="panel">
+          <h3 class="sectionTitle">Danh sách giảng viên thỉnh giảng</h3>
+          <div class="row" style="margin-top: 0">
+            <input
+              type="text"
+              id="guestTeacherSearch"
+              placeholder="Lọc theo mã GV, chương trình, khoa..."
+              style="
+                width: 320px;
+                background: var(--panel2);
+                border: 1px solid var(--border);
+                color: var(--text);
+                border-radius: 6px;
+                padding: 7px 10px;
+                font-size: 13px;
+              "
+              oninput="renderGuestTeacherList()"
+            />
+            <span class="log" id="guestTeacherListCount"></span>
+            <div style="margin-left: auto">
+              <label style="display: inline; margin-right: 6px"
+                >hoặc nhập trực tiếp mã GV:</label
+              >
+              <input
+                type="number"
+                id="lookupTeacherId"
+                placeholder="vd: 172"
+                style="width: 110px; display: inline-block"
+              />
+              <button onclick="lookupTeacher()">Xem</button>
+            </div>
+          </div>
+          <div class="scroll-box" style="margin-top: 12px">
+            <table id="guestTeacherListTable">
+              <thead>
+                <tr>
+                  <th>GV</th>
+                  <th>Số lớp thỉnh giảng</th>
+                  <th>Chương trình / Khoa</th>
+                  <th>Trạng thái</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div id="lookupResult">
+            <div class="empty-hint">
+              Bấm 1 GV ở danh sách trên để xem chi tiết.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= NHAT KY ================= -->
+      <div class="screen" id="screen-eventlog">
+        <h2 class="pageTitle">Nhật ký thao tác</h2>
+        <div class="panel">
+          <div class="log" id="eventLog">(chưa có thao tác nào)</div>
+        </div>
+      </div>
+    </main>
+
+    <script>
+      const DAY_NAMES = ["Th2", "Th3", "Th4", "Th5", "Th6", "Th7", "CN"];
+      let CURRENT = {
+        params: null,
+        guest: null,
+        resident: null,
+        submissions: null,
+        crossConflicts: null,
+      };
+
+      function showScreen(name) {
+        document
+          .querySelectorAll(".screen")
+          .forEach((el) => el.classList.remove("active"));
+        document
+          .querySelectorAll(".navItem")
+          .forEach((el) => el.classList.remove("active"));
+        document.getElementById("screen-" + name).classList.add("active");
+        const nav = document.querySelector(`.navItem[data-screen="${name}"]`);
+        if (nav) nav.classList.add("active");
+      }
+
+      function fmtSlot(day, period) {
+        return `${DAY_NAMES[day]} - Tiết ${period + 1}`;
+      }
+
+      function logEvent(msg) {
+        const box = document.getElementById("eventLog");
+        const t = new Date().toLocaleTimeString();
+        const prev =
+          box.textContent === "(chưa có thao tác nào)" ? "" : box.textContent;
+        box.textContent = `[${t}] ${msg}\n` + prev;
+      }
+
+      function statCard(container, num, label) {
+        const d = document.createElement("div");
+        d.className = "stat-card";
+        d.innerHTML = `<div class="num">${num}</div><div class="lbl">${label}</div>`;
+        container.appendChild(d);
+      }
+
+      async function generateData() {
+        const body = {
+          numTeachers: +document.getElementById("numTeachers").value,
+          pctResident: +document.getElementById("pctResident").value,
+          numSections: +document.getElementById("numSections").value,
+          pctSectionsGuest: +document.getElementById("pctSectionsGuest").value,
+          ltPool: +document.getElementById("ltPool").value,
+          labPool: +document.getElementById("labPool").value,
+          numDays: +document.getElementById("numDays").value,
+          numForcedConflicts:
+            +document.getElementById("numForcedConflicts").value,
+          pctPreSubmitted: +document.getElementById("pctPreSubmitted").value,
+          seed: +document.getElementById("seed").value,
+        };
+        document.getElementById("genStatus").textContent =
+          "Đang sinh dữ liệu...";
+        const res = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        document.getElementById("genStatus").textContent =
+          "Đã sinh xong. Xem tiếp mục 2-4 ở sidebar.";
+        applyLoadedData(
+          data,
+          `Sinh dữ liệu GIẢ LẬP mới (seed=${body.seed}): ${data.numTeachers} GV, ${data.numSections} lớp (${data.pendingSections.length} lớp thỉnh giảng CHƯA nộp giờ, chờ nhập ở mục 4).`,
+        );
+      }
+
+      async function loadRealData(fileKey) {
+        document.getElementById("realDataStatus").textContent =
+          "Đang nạp dữ liệu thật...";
+        const res = await fetch("/api/load-real-data", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ file: fileKey }),
+        });
+        const data = await res.json();
+        if (data.error) {
+          document.getElementById("realDataStatus").textContent =
+            "Lỗi: " + data.error;
+          return;
+        }
+        document.getElementById("realDataStatus").textContent =
+          "Đã nạp xong dữ liệu thật.";
+        applyLoadedData(
+          data,
+          `Nạp dữ liệu THẬT từ ${data.sourceLabel}: ${data.numTeachers} GV thật, ${data.numSections} buổi học thật` +
+            (data.numTimeAssumed
+              ? ` (${data.numTimeAssumed} buổi CHƯA có giờ thực - để thuật toán tự xếp).`
+              : "."),
+        );
+      }
+
+      function applyLoadedData(data, logMsg) {
+        CURRENT.params = data;
+        CURRENT.submissions = data.submissions;
+        CURRENT.crossConflicts = data.crossProgramConflicts;
+        CURRENT.pendingSections = data.pendingSections;
+        CURRENT.windowDraft = [];
+        CURRENT.guest = null;
+        CURRENT.resident = null;
+
+        const badge = document.getElementById("dataSourceBadge");
+        if (data.isRealData) {
+          badge.innerHTML =
+            `<div class="pill warn" style="margin-bottom:6px;">DỮ LIỆU THẬT — nguồn: ${data.sourceLabel}</div>` +
+            (data.numTimeAssumed
+              ? `<div class="pill" style="margin-bottom:10px;">${data.numTimeAssumed} buổi CHƯA có giờ thực trong file — thuật toán tự chọn giờ (không phải kiểm tra giờ có sẵn)</div>`
+              : "");
+        } else {
+          badge.innerHTML = `<div class="pill" style="margin-bottom:10px;">Dữ liệu giả lập</div>`;
+        }
+
+        const cards = document.getElementById("statCards");
+        cards.innerHTML = "";
+        statCard(
+          cards,
+          data.numTeachers,
+          `Giảng viên (CH ${data.numResident} / TG ${data.numGuest})`,
+        );
+        statCard(
+          cards,
+          data.numSections,
+          `Lớp học phần (TG ${data.numGuestSections} / CH ${data.numResidentSections})`,
+        );
+        statCard(cards, data.numPrograms, "Chương trình / điều phối viên");
+        statCard(
+          cards,
+          data.multiProgramGuestTeachers,
+          "GV thỉnh giảng dạy liên chương trình",
+        );
+        statCard(
+          cards,
+          `${data.ltPool} / ${data.labPool}`,
+          "Pool phòng LT / Lab",
+        );
+
+        document.getElementById("btnGuest").disabled = false;
+        document.getElementById("btnResident").disabled = true;
+        document.getElementById("guestStats").innerHTML = "";
+        document.getElementById("residentStats").innerHTML = "";
+        document.getElementById("guestUnplacedWrap").style.display = "none";
+        document.getElementById("guestPlacedWrap").style.display = "none";
+        document.getElementById("heatmapWrap").style.display = "none";
+        document.getElementById("residentListWrap").style.display = "none";
+        document.getElementById("lookupResult").innerHTML =
+          '<div class="empty-hint">Nhập mã GV để xem.</div>';
+        document.getElementById("navBadgePhase1").textContent = "";
+
+        renderFacultyStats(data.facultyStats);
+        renderCrossConflicts(data.crossProgramConflicts);
+        renderSubmissions();
+        renderGuestTeacherList();
+        initDayPeriodSelects();
+        renderPendingSectionSelect();
+        renderWindowDraft();
+        document.getElementById("submitFeedback").innerHTML = "";
+        logEvent(logMsg);
+      }
+
+      function initDayPeriodSelects() {
+        const p = CURRENT.params;
+        const daySel = document.getElementById("newWindowDay");
+        const perSel = document.getElementById("newWindowPeriod");
+        daySel.innerHTML = "";
+        for (let d = 0; d < p.numDays; d++)
+          daySel.innerHTML += `<option value="${d}">${DAY_NAMES[d]}</option>`;
+        perSel.innerHTML = "";
+        for (let per = 0; per < p.slotsPerDay - p.duration + 1; per++)
+          perSel.innerHTML += `<option value="${per}">Tiết ${per + 1}</option>`;
+      }
+
+      function renderPendingSectionSelect() {
+        const sel = document.getElementById("pendingSectionSelect");
+        const pending = CURRENT.pendingSections || [];
+        document.getElementById("navBadgePending").textContent =
+          pending.length || "";
+        if (pending.length === 0) {
+          sel.innerHTML =
+            '<option value="">(Không còn lớp nào chờ nộp giờ)</option>';
+          return;
+        }
+        sel.innerHTML = pending
+          .map(
+            (s) =>
+              `<option value="${s.sectionId}">#${s.sectionId} — ${s.courseName || "(chưa rõ môn)"} — ${s.teacherName} — ${s.programLabel} — ${s.coordinator} — phòng ${s.roomType}</option>`,
+          )
+          .join("");
+      }
+
+      function addWindowDraft() {
+        const day = +document.getElementById("newWindowDay").value;
+        const period = +document.getElementById("newWindowPeriod").value;
+        const p = CURRENT.params;
+        const slot = day * p.slotsPerDay + period;
+        if (!CURRENT.windowDraft.includes(slot)) CURRENT.windowDraft.push(slot);
+        renderWindowDraft();
+      }
+
+      function removeWindowDraft(slot) {
+        CURRENT.windowDraft = CURRENT.windowDraft.filter((s) => s !== slot);
+        renderWindowDraft();
+      }
+
+      function renderWindowDraft() {
+        const p = CURRENT.params;
+        const box = document.getElementById("windowDraftList");
+        if (CURRENT.windowDraft.length === 0) {
+          box.innerHTML =
+            '<span class="empty-hint">Chưa thêm khung giờ nào.</span>';
+          return;
+        }
+        box.innerHTML = CURRENT.windowDraft
+          .map((slot) => {
+            const day = Math.floor(slot / p.slotsPerDay),
+              period = slot % p.slotsPerDay;
+            return `<span class="pill guest" style="margin-right:6px; cursor:pointer;" onclick="removeWindowDraft(${slot})">
+              ${DAY_NAMES[day]} Tiết ${period + 1} &times;</span>`;
+          })
+          .join("");
+      }
+
+      async function submitAvailability() {
+        const sectionId = document.getElementById("pendingSectionSelect").value;
+        if (sectionId === "") {
+          document.getElementById("submitStatus").textContent =
+            "Không còn lớp nào để nộp.";
+          return;
+        }
+        if (CURRENT.windowDraft.length === 0) {
+          document.getElementById("submitStatus").textContent =
+            "Cần thêm ít nhất 1 khung giờ.";
+          return;
+        }
+
+        document.getElementById("submitStatus").textContent = "Đang nộp...";
+        const res = await fetch("/api/submit-availability", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sectionId: +sectionId,
+            windowSlots: CURRENT.windowDraft,
+          }),
+        });
+        const data = await res.json();
+
+        // Cap nhat state cuc bo: xoa khoi pending, them vao submissions
+        const secInfo = CURRENT.pendingSections.find(
+          (s) => s.sectionId === +sectionId,
+        );
+        CURRENT.pendingSections = CURRENT.pendingSections.filter(
+          (s) => s.sectionId !== +sectionId,
+        );
+        CURRENT.submissions.push({
+          sectionId: +sectionId,
+          teacherId: data.teacherId,
+          teacherName: data.teacherName,
+          courseName: secInfo.courseName,
+          program: secInfo.program,
+          programLabel: secInfo.programLabel,
+          coordinator: secInfo.coordinator,
+          roomType: secInfo.roomType,
+          windowSlots: CURRENT.windowDraft.slice(),
+          windowLabels: data.windowLabels,
+          isSingleFixedWindow: CURRENT.windowDraft.length === 1,
+        });
+
+        let feedbackHtml = `<div class="pill ok">Đã nộp giờ dạy cho section #${sectionId} (${data.teacherName})</div>`;
+        if (data.crossProgramConflict) {
+          const c = data.crossProgramConflict;
+          const sectionsHtml = c.sections
+            .map(
+              (s) =>
+                `<div style="margin-bottom:4px;"><b>${s.coordinator}</b> (Section #${s.sectionId}) báo:
+       ${s.windowLabels.map((w) => `<span class="pill guest" style="margin-right:3px;">${w}</span>`).join("")}</div>`,
+            )
+            .join("");
+          if (c.feasible === false) {
+            feedbackHtml += `<div class="panel" style="margin-top:10px; border-color:var(--danger);">
+        <b class="pill warn">GV này dạy liên chương trình — XUNG ĐỘT THẬT SỰ phát hiện ngay lúc nộp!</b>
+        <div style="margin-top:8px;">${sectionsHtml}</div>
+        <div style="margin-top:6px; font-size:12.5px; color:var(--muted);">Cần báo lại điều phối viên liên quan để thương lượng lại giờ TRƯỚC khi chạy Giai đoạn 1.</div>
+      </div>`;
+          } else if (c.feasible === true) {
+            feedbackHtml += `<div style="margin-top:8px;"><span class="pill ok">GV này dạy liên chương trình khác — đã kiểm tra, có cách xếp không trùng.</span></div>`;
+          }
+        }
+        document.getElementById("submitFeedback").innerHTML = feedbackHtml;
+        document.getElementById("submitStatus").textContent =
+          `Còn ${data.remainingPending} lớp chờ nộp.`;
+
+        CURRENT.windowDraft = [];
+        renderWindowDraft();
+        renderPendingSectionSelect();
+        renderSubmissions();
+        renderGuestTeacherList();
+        logEvent(
+          `Điều phối viên đã nộp giờ dạy cho section #${sectionId} (${data.teacherName}).` +
+            (data.crossProgramConflict &&
+            data.crossProgramConflict.feasible === false
+              ? " -> PHÁT HIỆN XUNG ĐỘT liên chương trình!"
+              : ""),
+        );
+      }
+
+      function renderFacultyStats(stats) {
+        const tbody = document.querySelector("#facultyTable tbody");
+        tbody.innerHTML = "";
+        stats.forEach((f) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${f.facultyName}</td><td>${f.numPrograms}</td><td>${f.numSections}</td>
+                     <td><span class="pill guest">${f.numGuestSections}</span></td>
+                     <td><span class="pill resident">${f.numResidentSections}</span></td>`;
+          tbody.appendChild(tr);
+        });
+      }
+
+      function renderCrossConflicts(conflicts) {
+        const statsBox = document.getElementById("crossConflictStats");
+        const guaranteedConflict = conflicts.filter(
+          (c) => c.feasible === false,
+        ).length;
+        const autoResolvable = conflicts.filter(
+          (c) => c.feasible === true,
+        ).length;
+        const unchecked = conflicts.filter((c) => c.feasible === null).length;
+        statsBox.innerHTML = "";
+        statCard(
+          statsBox,
+          conflicts.length,
+          "GV dạy liên chương trình cần check",
+        );
+        statCard(statsBox, autoResolvable, "Tự động giải quyết được");
+        statCard(
+          statsBox,
+          guaranteedConflict,
+          "XUNG ĐỘT THẬT SỰ — cần thương lượng trước",
+        );
+        if (unchecked)
+          statCard(statsBox, unchecked, "Không kiểm tra hết tổ hợp");
+
+        document.getElementById("navBadgeConflict").textContent =
+          guaranteedConflict || "";
+        document.getElementById("navBadgeConflict").className =
+          guaranteedConflict ? "badge warn" : "badge";
+
+        const tbody = document.querySelector("#crossConflictTable tbody");
+        tbody.innerHTML = "";
+        conflicts
+          .slice()
+          .sort(
+            (a, b) =>
+              (a.feasible === false ? -1 : 1) - (b.feasible === false ? -1 : 1),
+          )
+          .forEach((c) => {
+            const tr = document.createElement("tr");
+            const sectionsHtml = c.sections
+              .map(
+                (s) =>
+                  `<div style="margin-bottom:4px;"><b>${s.coordinator}</b> (Section #${s.sectionId}, ${s.courseName || "môn chưa rõ"}) báo:
+       ${s.windowLabels.map((w) => `<span class="pill guest" style="margin-right:3px;">${w}</span>`).join("")}</div>`,
+              )
+              .join("");
+            let resultPill;
+            if (c.feasible === false)
+              resultPill = '<span class="pill warn">XUNG ĐỘT THẬT SỰ</span>';
+            else if (c.feasible === true)
+              resultPill = '<span class="pill ok">Tự giải quyết được</span>';
+            else resultPill = '<span class="pill">Chưa kiểm tra hết</span>';
+            tr.innerHTML = `<td><a href="#" onclick="jumpToTeacher(${c.teacherId}); return false;">${c.teacherName}</a></td>
+                     <td>${sectionsHtml}</td><td>${resultPill}</td>`;
+            tbody.appendChild(tr);
+          });
+      }
+
+      function jumpToTeacher(tid) {
+        document.getElementById("lookupTeacherId").value = tid;
+        showScreen("lookup");
+        lookupTeacher(tid);
+      }
+
+      function renderGuestTeacherList() {
+        if (!CURRENT.submissions) return;
+        const search = (
+          document.getElementById("guestTeacherSearch").value || ""
+        )
+          .toLowerCase()
+          .trim();
+
+        const byTeacher = {};
+        CURRENT.submissions.forEach((s) => {
+          if (!byTeacher[s.teacherId])
+            byTeacher[s.teacherId] = { teacherId: s.teacherId, sections: [] };
+          byTeacher[s.teacherId].sections.push(s);
+        });
+
+        let rows = Object.values(byTeacher);
+        if (search) {
+          rows = rows.filter((r) => {
+            const hay = [
+              String(r.teacherId),
+              r.sections[0].teacherName,
+              ...r.sections.map(
+                (s) =>
+                  s.programLabel +
+                  " " +
+                  s.coordinator +
+                  " " +
+                  (s.courseName || ""),
+              ),
+            ]
+              .join(" ")
+              .toLowerCase();
+            return hay.includes(search);
+          });
+        }
+        rows.sort((a, b) => a.teacherId - b.teacherId);
+
+        document.getElementById("guestTeacherListCount").textContent =
+          `Hiện ${rows.length} / ${Object.keys(byTeacher).length} GV thỉnh giảng.`;
+
+        const tbody = document.querySelector("#guestTeacherListTable tbody");
+        tbody.innerHTML = "";
+        rows.forEach((r) => {
+          const programs = [
+            ...new Set(r.sections.map((s) => s.programLabel)),
+          ].join(", ");
+          const courses = [
+            ...new Set(r.sections.map((s) => s.courseName).filter(Boolean)),
+          ].join(", ");
+          let statusHtml =
+            '<span class="empty-hint">Chưa chạy Giai đoạn 1</span>';
+          if (CURRENT.guest) {
+            const placedCount = CURRENT.guest.lessons.filter(
+              (l) => l.teacherId === r.teacherId,
+            ).length;
+            const pendingCount = CURRENT.guest.unplaced.filter(
+              (u) => u.teacherId === r.teacherId,
+            ).length;
+            statusHtml = pendingCount
+              ? `<span class="pill ok">${placedCount} đã xếp</span> <span class="pill warn">${pendingCount} chờ thương lượng</span>`
+              : `<span class="pill ok">${placedCount}/${r.sections.length} đã xếp</span>`;
+          }
+          const tr = document.createElement("tr");
+          tr.style.cursor = "pointer";
+          tr.onclick = () => lookupTeacher(r.teacherId);
+          tr.innerHTML = `<td><b>${r.sections[0].teacherName}</b></td><td>${r.sections.length} (${courses})</td><td>${programs}</td><td>${statusHtml}</td>`;
+          tbody.appendChild(tr);
+        });
+      }
+
+      function renderSubmissions() {
+        if (!CURRENT.submissions) return;
+        const filterVal = document.getElementById("filterTeacherId").value;
+        const filterId = filterVal === "" ? null : +filterVal;
+        const rows = CURRENT.submissions.filter(
+          (s) => filterId === null || s.teacherId === filterId,
+        );
+
+        document.getElementById("submissionsCount").textContent =
+          `Hiện ${rows.length} / ${CURRENT.submissions.length} lớp do thỉnh giảng dạy.`;
+
+        const tbody = document.querySelector("#submissionsTable tbody");
+        tbody.innerHTML = "";
+        rows.forEach((s) => {
+          const tr = document.createElement("tr");
+          const windowsHtml = s.windowLabels
+            .map(
+              (w) =>
+                `<span class="pill guest" style="margin-right:4px;">${w}</span>`,
+            )
+            .join("");
+          const flag = s.isSingleFixedWindow
+            ? '<span class="pill warn">Chỉ 1 khung duy nhất</span>'
+            : '<span class="pill ok">Có phương án dự phòng</span>';
+          tr.innerHTML = `<td>#${s.sectionId}<br><span style="color:var(--muted)">${s.courseName || ""}</span></td>
+                     <td><a href="#" onclick="jumpToTeacher(${s.teacherId}); return false;">${s.teacherName}</a></td>
+                     <td>${s.programLabel}</td><td>${s.coordinator}</td><td>${s.roomType}</td>
+                     <td>${windowsHtml}</td><td>${flag}</td>`;
+          tbody.appendChild(tr);
+        });
+      }
+
+      async function solveGuest() {
+        document.getElementById("guestStatus").textContent =
+          "Đang giải Giai đoạn 1...";
+        const res = await fetch("/api/solve-guest", { method: "POST" });
+        const data = await res.json();
+        CURRENT.guest = data;
+
+        const cards = document.getElementById("guestStats");
+        cards.innerHTML = "";
+        statCard(cards, data.status, "Trạng thái solver");
+        statCard(cards, `${data.elapsedSeconds}s`, "Thời gian giải");
+        statCard(cards, `${data.placedCount}/${data.total}`, "Xếp được");
+        statCard(cards, data.unplaced.length, "Cần thương lượng lại");
+        document.getElementById("navBadgePhase1").textContent =
+          data.unplaced.length || "";
+
+        const tbody = document.querySelector("#guestUnplacedTable tbody");
+        tbody.innerHTML = "";
+        data.unplaced.forEach((u) => {
+          const tr = document.createElement("tr");
+          let reason;
+          if (u.notSubmittedYet)
+            reason =
+              '<span class="pill warn">Chưa nộp giờ dạy (xem mục 4)</span>';
+          else if (u.isForcedConflict)
+            reason =
+              '<span class="pill warn">Trùng với section khác cùng GV</span>';
+          else
+            reason =
+              '<span class="pill warn">Tranh chấp tài nguyên/phòng</span>';
+          const otherHtml =
+            u.otherSectionsSameTeacher
+              .map(
+                (o) =>
+                  `<div style="margin-bottom:3px;"><b>${o.coordinator}</b> (Section #${o.sectionId}, ${o.courseName || ""}, ${o.programLabel}) báo: ${o.windows.join(", ")}</div>`,
+              )
+              .join("") ||
+            '<span class="empty-hint">(GV này không có section thỉnh giảng khác)</span>';
+          tr.innerHTML = `<td>#${u.id}<br><span style="color:var(--muted)">${u.courseName || ""}</span></td>
+                     <td><a href="#" onclick="jumpToTeacher(${u.teacherId}); return false;">${u.teacherName}</a></td>
+                     <td>${u.programLabel}<br><span style="color:var(--muted)">${u.coordinator}</span></td>
+                     <td>${u.windows.join(", ") || "(chưa nộp)"}</td><td>${reason}</td><td>${otherHtml}</td>`;
+          tbody.appendChild(tr);
+        });
+        document.getElementById("guestUnplacedWrap").style.display = data
+          .unplaced.length
+          ? "block"
+          : "none";
+
+        const placedBody = document.querySelector("#guestPlacedTable tbody");
+        placedBody.innerHTML = "";
+        data.lessons
+          .slice()
+          .sort((a, b) => a.teacherId - b.teacherId || a.slot - b.slot)
+          .forEach((l) => {
+            const tr = document.createElement("tr");
+            const flexHtml = l.unusedFlexibleWindows.length
+              ? l.unusedFlexibleWindows
+                  .map(
+                    (w) =>
+                      `<span class="pill" style="margin-right:3px;">${w}</span>`,
+                  )
+                  .join("")
+              : '<span class="empty-hint">(không có, chỉ báo đúng 1 khung)</span>';
+            tr.innerHTML = `<td>#${l.id}<br><span style="color:var(--muted)">${l.courseName || ""}</span></td>
+                     <td><a href="#" onclick="jumpToTeacher(${l.teacherId}); return false;">${l.teacherName}</a></td>
+                     <td>${l.programLabel}<br><span style="color:var(--muted)">${l.coordinator}</span></td>
+                     <td>${l.roomType}</td>
+                     <td><span class="pill ok">${fmtSlot(l.day, l.period)}</span></td>
+                     <td>${flexHtml}</td>`;
+            placedBody.appendChild(tr);
+          });
+        document.getElementById("guestPlacedWrap").style.display = "block";
+
+        document.getElementById("guestStatus").textContent = "Xong.";
+        document.getElementById("btnResident").disabled = false;
+        renderGuestTeacherList();
+        logEvent(
+          `Giai đoạn 1: xếp ${data.placedCount}/${data.total} buổi thỉnh giảng trong ${data.elapsedSeconds}s.`,
+        );
+      }
+
+      function renderSubmissionListHtml(mySubmissions) {
+        let html =
+          '<table style="margin-bottom:14px;"><thead><tr><th>Section</th><th>Môn học</th><th>Chương trình</th><th>Điều phối viên báo</th><th>Phòng</th><th>Khung giờ đã báo</th></tr></thead><tbody>';
+        mySubmissions.forEach((s) => {
+          const pills = s.windowLabels
+            .map(
+              (w) =>
+                `<span class="pill guest" style="margin-right:4px;">${w}</span>`,
+            )
+            .join("");
+          html += `<tr><td>#${s.sectionId}</td><td>${s.courseName || ""}</td><td>${s.programLabel}</td><td>${s.coordinator}</td><td>${s.roomType}</td><td>${pills}</td></tr>`;
+        });
+        html += "</tbody></table>";
+        return html;
+      }
+
+      function lookupTeacher(tidArg) {
+        const box = document.getElementById("lookupResult");
+        let tid;
+        if (tidArg !== undefined) {
+          tid = +tidArg;
+          document.getElementById("lookupTeacherId").value = tid;
+        } else {
+          const idInput = document.getElementById("lookupTeacherId").value;
+          if (idInput === "") {
+            box.innerHTML =
+              '<div class="empty-hint">Bấm 1 GV ở danh sách trên để xem chi tiết.</div>';
+            return;
+          }
+          tid = +idInput;
+        }
+        box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+        const mySubmissions = (CURRENT.submissions || []).filter(
+          (s) => s.teacherId === tid,
+        );
+        const pendingSub = (CURRENT.pendingSections || []).filter(
+          (s) => s.teacherId === tid,
+        );
+        const displayName =
+          (mySubmissions[0] && mySubmissions[0].teacherName) ||
+          (pendingSub[0] && pendingSub[0].teacherName) ||
+          `GV #${tid}`;
+
+        if (!CURRENT.guest) {
+          if (mySubmissions.length === 0 && pendingSub.length === 0) {
+            box.innerHTML = `<div class="empty-hint">${displayName} không phải thỉnh giảng có lớp trong dữ liệu hiện tại, hoặc là GV cơ hữu (chưa có khung giờ báo trước).</div>`;
+            return;
+          }
+          let html = `<div style="margin-bottom:10px;">${displayName} — <span class="pill guest">Thỉnh giảng</span> — chưa chạy Giai đoạn 1, đây là khung giờ ĐÃ BÁO (đầu vào):</div>`;
+          if (mySubmissions.length)
+            html += renderSubmissionListHtml(mySubmissions);
+          if (pendingSub.length) {
+            html +=
+              `<div style="margin-top:8px; font-size:12.5px; color:var(--warn);">Còn ${pendingSub.length} lớp CHƯA nộp giờ: ` +
+              pendingSub
+                .map(
+                  (s) =>
+                    `#${s.sectionId} (${s.courseName || ""}, ${s.programLabel})`,
+                )
+                .join(", ") +
+              " — xem mục 4 để nhập.</div>";
+          }
+          box.innerHTML = html;
+          return;
+        }
+        const allLessons = CURRENT.guest.lessons.concat(
+          CURRENT.resident ? CURRENT.resident.lessons : [],
+        );
+        const mine = allLessons
+          .filter((l) => l.teacherId === tid)
+          .sort((a, b) => a.slot - b.slot);
+        const pending = CURRENT.guest.unplaced.filter(
+          (u) => u.teacherId === tid,
+        );
+        const name =
+          (mine[0] && mine[0].teacherName) ||
+          (pending[0] && pending[0].teacherName) ||
+          displayName;
+
+        if (
+          mine.length === 0 &&
+          pending.length === 0 &&
+          mySubmissions.length === 0
+        ) {
+          box.innerHTML = `<div class="empty-hint">${name} không dạy buổi nào trong dữ liệu hiện tại (hoặc chưa chạy Giai đoạn 2 nếu đây là GV cơ hữu).</div>`;
+          return;
+        }
+
+        const type = mine.length
+          ? mine[0].teacherType
+          : mySubmissions.length
+            ? "GUEST"
+            : "RESIDENT";
+        const pill =
+          type === "GUEST"
+            ? '<span class="pill guest">Thỉnh giảng</span>'
+            : '<span class="pill resident">Cơ hữu</span>';
+
+        let html =
+          `<div style="margin-bottom:10px;">${name} — ${pill} — ${mine.length} buổi đã xếp` +
+          (pending.length
+            ? `, <span class="pill warn">${pending.length} buổi đang chờ thương lượng</span>`
+            : "") +
+          `</div>`;
+
+        if (mySubmissions.length) {
+          html += `<div style="font-size:12.5px; color:var(--muted); margin:10px 0 6px;">Khung giờ ĐÃ BÁO (đầu vào) — so sánh với giờ ĐÃ XẾP bên dưới:</div>`;
+          html += renderSubmissionListHtml(mySubmissions);
+        }
+
+        const p = CURRENT.params;
+        const grid = Array.from({ length: p.slotsPerDay }, () =>
+          Array(p.numDays).fill(null),
+        );
+        mine.forEach((l) => {
+          for (let d = 0; d < p.duration; d++) {
+            const per = l.period + d;
+            if (per < p.slotsPerDay) grid[per][l.day] = l;
+          }
+        });
+        html +=
+          '<table style="border-collapse:separate; border-spacing:3px; margin-bottom:14px;"><tr><th></th>';
+        for (let d = 0; d < p.numDays; d++)
+          html += `<th style="text-align:center;">${DAY_NAMES[d]}</th>`;
+        html += "</tr>";
+        for (let per = 0; per < p.slotsPerDay; per++) {
+          html += `<tr><th>T${per + 1}</th>`;
+          for (let d = 0; d < p.numDays; d++) {
+            const l = grid[per][d];
+            const bg = l
+              ? l.teacherType === "GUEST"
+                ? "rgba(79,140,255,.75)"
+                : "rgba(53,197,138,.75)"
+              : "#1e2536";
+            const label = l ? `#${l.id}` : "";
+            html += `<td class="cell" style="background:${bg}; width:70px;">${label}</td>`;
+          }
+          html += "</tr>";
+        }
+        html += "</table>";
+
+        if (mine.length) {
+          html +=
+            "<table><thead><tr><th>Section</th><th>Môn học</th><th>Chương trình</th><th>Phòng</th><th>Giờ đã xếp</th><th>Còn linh động (chưa dùng)</th></tr></thead><tbody>";
+          mine.forEach((l) => {
+            const flex =
+              l.unusedFlexibleWindows && l.unusedFlexibleWindows.length
+                ? l.unusedFlexibleWindows
+                    .map(
+                      (w) =>
+                        `<span class="pill" style="margin-right:3px;">${w}</span>`,
+                    )
+                    .join("")
+                : l.teacherType === "GUEST"
+                  ? '<span class="empty-hint">(không có)</span>'
+                  : "";
+            html += `<tr><td>#${l.id}</td><td>${l.courseName || ""}</td><td>${l.programLabel || "CT " + l.program}</td><td>${l.roomType}</td><td>${fmtSlot(l.day, l.period)}</td><td>${flex}</td></tr>`;
+          });
+          html += "</tbody></table>";
+        }
+        if (pending.length) {
+          html +=
+            '<div style="margin-top:10px; font-size:12.5px; color:var(--warn);">Buổi đang chờ thương lượng: ' +
+            pending
+              .map(
+                (u) =>
+                  `#${u.id} (${u.programLabel}, ${u.coordinator} báo: ${u.windows.join(", ")})`,
+              )
+              .join("; ") +
+            "</div>";
+        }
+
+        box.innerHTML = html;
+      }
+
+      function renderHeatmap(
+        containerId,
+        lessons,
+        roomType,
+        pool,
+        numDays,
+        slotsPerDay,
+        duration,
+      ) {
+        const grid = Array.from({ length: slotsPerDay }, () =>
+          Array(numDays).fill(0),
+        );
+        lessons
+          .filter((l) => l.roomType === roomType)
+          .forEach((l) => {
+            for (let d = 0; d < duration; d++) {
+              const p = l.period + d;
+              if (p < slotsPerDay) grid[p][l.day] += 1;
+            }
+          });
+        let html = `<div><div style="font-size:12px;font-weight:700;margin-bottom:6px;">${roomType} (pool=${pool})</div><table><tr><th></th>`;
+        for (let d = 0; d < numDays; d++) html += `<th>${DAY_NAMES[d]}</th>`;
+        html += "</tr>";
+        for (let p = 0; p < slotsPerDay; p++) {
+          html += `<tr><th>T${p + 1}</th>`;
+          for (let d = 0; d < numDays; d++) {
+            const v = grid[p][d];
+            const ratio = pool ? v / pool : 0;
+            const color =
+              v === 0
+                ? "#1e2536"
+                : `rgba(79,140,255,${0.15 + 0.75 * Math.min(ratio, 1)})`;
+            const textColor = ratio > 0.55 ? "#0b0f18" : "#c9d2e6";
+            html += `<td class="cell" style="background:${color}; color:${textColor}">${v}</td>`;
+          }
+          html += "</tr>";
+        }
+        html += "</table></div>";
+        document.getElementById(containerId).innerHTML = html;
+      }
+
+      async function solveResident() {
+        document.getElementById("residentStatus").textContent =
+          "Đang giải Giai đoạn 2...";
+        const res = await fetch("/api/solve-resident", { method: "POST" });
+        const data = await res.json();
+        CURRENT.resident = data;
+        renderResidentResult(data, "Giải Giai đoạn 2 xong");
+      }
+
+      function renderResidentResult(data, logMsg) {
+        const cards = document.getElementById("residentStats");
+        cards.innerHTML = "";
+        statCard(cards, data.status, "Trạng thái solver");
+        statCard(cards, `${data.elapsedSeconds}s`, "Thời gian giải");
+        statCard(cards, `${data.placedCount}/${data.total}`, "Xếp được");
+
+        const allLessons = CURRENT.guest.lessons.concat(data.lessons);
+        const p = CURRENT.params;
+        document.getElementById("heatmaps").innerHTML =
+          '<div id="hm-LT"></div><div id="hm-LAB"></div>';
+        renderHeatmap(
+          "hm-LT",
+          allLessons,
+          "LT",
+          p.ltPool,
+          p.numDays,
+          p.slotsPerDay,
+          p.duration,
+        );
+        renderHeatmap(
+          "hm-LAB",
+          allLessons,
+          "LAB",
+          p.labPool,
+          p.numDays,
+          p.slotsPerDay,
+          p.duration,
+        );
+        document.getElementById("heatmapWrap").style.display = "block";
+
+        const tbody = document.querySelector("#residentTable tbody");
+        tbody.innerHTML = "";
+        data.lessons
+          .sort((a, b) => a.slot - b.slot)
+          .forEach((l) => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `<td>#${l.id}<br><span style="color:var(--muted)">${l.courseName || ""}</span></td>
+                     <td><a href="#" onclick="jumpToTeacher(${l.teacherId}); return false;">${l.teacherName}</a></td>
+                     <td>${l.programLabel || "CT " + l.program}</td>
+                     <td>${l.roomType}</td><td>${fmtSlot(l.day, l.period)}</td>
+                     <td><button class="btn-reject" onclick="rejectSlot(${l.id}, ${l.slot})">Từ chối</button></td>`;
+            tbody.appendChild(tr);
+          });
+        document.getElementById("residentListWrap").style.display = "block";
+        document.getElementById("residentStatus").textContent = "Xong.";
+        if (logMsg)
+          logEvent(
+            `${logMsg}: xếp ${data.placedCount}/${data.total} buổi cơ hữu trong ${data.elapsedSeconds}s.`,
+          );
+      }
+
+      async function rejectSlot(sectionId, slot) {
+        const res = await fetch("/api/reject", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sectionId, slot }),
+        });
+        const data = await res.json();
+        CURRENT.resident = data;
+        renderResidentResult(data, null);
+        logEvent(
+          `GV của section #${sectionId} từ chối giờ đã đề xuất -> đã luân chuyển, giải lại trong ${data.elapsedSeconds}s.`,
+        );
+      }
+    </script>
+  </body>
+</html>

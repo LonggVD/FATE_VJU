@@ -1,0 +1,184 @@
+import { TriangleAlert } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { AppSidebar } from '@/components/layout/app-sidebar';
+import { AppTopbar } from '@/components/layout/app-topbar';
+import { useIsDesktop } from '@/hooks/use-is-desktop';
+
+const SIDEBAR_KEY = 'tkb_sidebar_collapsed';
+
+/**
+ * Man "Thoi khoa bieu" chua luoi tuan + hop thu van de, "Du lieu hoc phan" chua
+ * bang mirror 29 cot Excel - ca hai can toan bo be ngang. Sidebar mo (256px) an
+ * mat cho, nen vao hai trang nay thanh ben tu thu ve rail icon (64px).
+ */
+const WIDE_PAGES = new Set(['schedule', 'manual']);
+
+function loadCollapsed() {
+  if (typeof window === 'undefined') return false;
+  try {
+    return localStorage.getItem(SIDEBAR_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * App-shell phong cach e-gov (dong bo app Nhap hoc VJU):
+ * bang canh bao demo -> topbar trang -> [sidebar 2 cap | page header + noi dung].
+ */
+export function AppLayout({
+  page,
+  sub,
+  role,
+  title,
+  crumbs,
+  actions,
+  onNavigate,
+  onChangeRole,
+  children,
+  footer,
+  // Bo padding quanh vung noi dung cho trang tu lo bo cuc sat mep. Dung cho man
+  // co bang rong hon man hinh (bang mirror 29 cot): moi px be ngang deu dang gia,
+  // ngoi trong the co padding chi lam no phai cuon ngang som hon can thiet.
+  bleed = false,
+}) {
+  const [collapsed, setCollapsedState] = useState(loadCollapsed);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const isDesktop = useIsDesktop();
+
+  const wide = WIDE_PAGES.has(page);
+  // Lua chon cua nguoi dung RIENG cho trang rong hien tai; doi trang thi quen di,
+  // de roi trang rong la sidebar tro lai dung thoi quen thuong ngay cua ho.
+  const [wideOverride, setWideOverride] = useState(null);
+  useEffect(() => setWideOverride(null), [page]);
+
+  const effectiveCollapsed = wide ? (wideOverride ?? true) : collapsed;
+
+  function setCollapsed(v) {
+    // Chi ghi nho thoi quen o trang thuong. Thu gon tu dong o trang rong la do
+    // bo cuc bat buoc, khong phai y muon cua nguoi dung - ghi lai se lam ho bi
+    // sidebar thu gon o moi trang khac ma khong hieu tai sao.
+    if (wide) {
+      setWideOverride(v);
+      return;
+    }
+    setCollapsedState(v);
+    try {
+      localStorage.setItem(SIDEBAR_KEY, v ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Dong drawer khi dieu huong hoac khi phong len desktop.
+  useEffect(() => setMobileOpen(false), [page, sub]);
+  useEffect(() => {
+    if (isDesktop) setMobileOpen(false);
+  }, [isDesktop]);
+
+  // Nut topbar: desktop -> thu gon rail; mobile -> mo/dong drawer.
+  const onToggleSidebar = () =>
+    isDesktop ? setCollapsed(!effectiveCollapsed) : setMobileOpen((o) => !o);
+
+  // Do chieu cao THAT cua page header roi phoi ra bien --page-header-h, de trang
+  // con muon dinh them mot thanh nua (vd thanh cong cu cua bang) chi can
+  // `sticky top-[var(--page-header-h)]`.
+  //
+  // Phai DO chu khong hard-code: chieu cao doi theo breakpoint (pt-4 -> md:pt-5,
+  // text-xl -> md:text-2xl) va theo viec trang do co crumbs hay khong. Hard-code
+  // mot con so se lech o dung mot trong bon to hop do.
+  const headerRef = useRef(null);
+  const [headerH, setHeaderH] = useState(0);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) {
+      setHeaderH(0);
+      return;
+    }
+    const measure = () => setHeaderH(el.offsetHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [title, crumbs]);
+
+  return (
+    <div className="bg-muted/40 flex h-dvh flex-col">
+      <DemoBanner />
+      <AppTopbar
+        collapsed={effectiveCollapsed}
+        onToggleSidebar={onToggleSidebar}
+        role={role}
+        onChangeRole={onChangeRole}
+      />
+      <div className="flex min-h-0 flex-1">
+        {/* Nền mờ khi mở drawer trên mobile (bấm để đóng) */}
+        {mobileOpen && (
+          <button
+            type="button"
+            aria-label="Đóng menu"
+            onClick={() => setMobileOpen(false)}
+            className="fixed inset-x-0 top-12 bottom-0 z-40 bg-black/40 lg:hidden"
+          />
+        )}
+        <AppSidebar
+          page={page}
+          sub={sub}
+          role={role}
+          collapsed={isDesktop ? effectiveCollapsed : false}
+          mobileOpen={mobileOpen}
+          onSetCollapsed={setCollapsed}
+          onNavigate={onNavigate}
+        />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <main
+            className="flex-1 overflow-y-auto"
+            style={{ '--page-header-h': `${headerH}px` }}
+          >
+            {title && (
+              <div
+                ref={headerRef}
+                className="bg-card/95 sticky top-0 z-20 flex flex-wrap items-end justify-between gap-3 border-b px-4 pt-4 pb-3 backdrop-blur md:px-6 md:pt-5"
+              >
+                <div>
+                  {crumbs && (
+                    <p className="text-muted-foreground text-xs">{crumbs}</p>
+                  )}
+                  <h1 className="text-xl font-bold tracking-tight md:text-2xl">
+                    {title}
+                  </h1>
+                </div>
+                {actions && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {actions}
+                  </div>
+                )}
+              </div>
+            )}
+            <div className={bleed ? undefined : "p-4 pt-3 md:p-6 md:pt-4"}>
+              {children}
+            </div>
+            {footer}
+          </main>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Canh bao "cong cu demo" - truoc day nam trong Header/Footer bang chu in hoa.
+ * Dat o day theo dung cho ImpersonationBar cua reference: bang mau ho phach vat
+ * ngang tren cung, khong the bo qua nhung cung khong chiem cho cua noi dung.
+ */
+function DemoBanner() {
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-amber-500 px-4 py-1.5 text-center text-[13px] font-medium text-amber-950">
+      <TriangleAlert className="size-4 shrink-0" />
+      <span>
+        <b>Công cụ nội bộ — không dùng để vận hành chính thức.</b> Kết quả xếp
+        lịch chỉ mang tính tham khảo cho giáo vụ khoa.
+      </span>
+    </div>
+  );
+}

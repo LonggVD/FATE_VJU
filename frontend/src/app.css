@@ -1,0 +1,193 @@
+/* ───────────────────────────────────────────────────────────────────
+   THỨ TỰ CASCADE LAYER — phải khai báo TRƯỚC mọi @import.
+
+   CSS không nằm trong layer LUÔN thắng CSS nằm trong layer, bất kể độ
+   đặc hiệu hay thứ tự khai báo. Nên nếu để styles.css (CSS thủ công cũ)
+   ở ngoài layer, riêng cái reset `* { margin:0; padding:0 }` của nó đã
+   đủ vô hiệu hoá TOÀN BỘ utility p-* / m-* của Tailwind — mọi component
+   port sang sẽ mất hết padding.
+
+   Đặt `legacy` GIỮA base và components:
+     - legacy vẫn đè lên preflight của Tailwind → trang chưa migrate giữ
+       nguyên diện mạo cũ;
+     - nhưng utility Tailwind (layer utilities) luôn thắng legacy → phần
+       đã migrate hiển thị đúng.
+   Layer này biến mất ở Phase 10 khi styles.css bị gỡ hẳn.
+   ─────────────────────────────────────────────────────────────────── */
+@layer theme, base, legacy, components, utilities;
+
+@import 'tailwindcss';
+@import './styles.css' layer(legacy);
+
+/* Quét class Tailwind trong toàn bộ mã nguồn React. */
+@source './**/*.{js,jsx}';
+
+/* ═══════════════════════════════════════════════════════════════════
+   Design system VJU — đồng bộ 1:1 với app Nhập học
+   (D:\App Nhập Học\Project\BE_Enrollment\resources\css\app.css).
+   Cầu nối shadcn/ui ↔ Tailwind v4, baseColor: slate.
+
+   KHÔNG sửa giá trị token ở đây theo ý riêng — muốn đổi thì đổi ở
+   reference trước rồi đồng bộ sang, để hai hệ thống không trôi khỏi nhau.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ───────────────────────────────────────────────────────────────────
+   DARK MODE HIỆN CHƯA BẬT — và đừng bật cho tới khi đọc hết đoạn này.
+
+   Bảng token `.dark` bên dưới cùng ~8 biến thể `dark:` trong
+   components/shared được giữ nguyên theo reference để hai bên không
+   trôi khỏi nhau. Nhưng KHÔNG có gì gán class `.dark` cả: không nút
+   bật, không đọc `prefers-color-scheme`.
+
+   Đó là cố ý. `styles.css` (CSS thủ công còn lại, nạp ở layer `legacy`)
+   có 0 rule cho `.dark` nhưng 37 màu nền hard-code — ô lưới trắng,
+   popover thẻ buổi học nền #1e293b, bảng nhiệt, bảng mirror Excel.
+   Gán `.dark` bây giờ sẽ cho ra vỏ ngoài tối nhưng toàn bộ vùng dữ
+   liệu vẫn trắng: hỏng nửa vời, tệ hơn là không có.
+
+   Muốn bật thật thì phải làm dark cho những chỗ đó trước.
+   ─────────────────────────────────────────────────────────────────── */
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.625rem;
+
+  --background: #ffffff;
+  --foreground: #333333; /* màu chữ đen chuẩn hệ thống */
+  --card: #ffffff;
+  --card-foreground: #333333;
+  --popover: #ffffff;
+  --popover-foreground: #333333;
+  /* Thương hiệu VJU — đỏ chủ đạo (#D82827). */
+  --primary: oklch(0.55 0.21 27);
+  --primary-foreground: #ffffff;
+  --secondary: oklch(0.968 0.007 247.896);
+  --secondary-foreground: oklch(0.3 0.12 27);
+  --muted: oklch(0.968 0.007 247.896);
+  --muted-foreground: #666666; /* màu xám chuẩn hệ thống */
+  --accent: oklch(0.968 0.01 27);
+  --accent-foreground: oklch(0.3 0.12 27);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.984 0.003 247.858);
+  --border: oklch(0.925 0.012 30);
+  --input: oklch(0.925 0.012 30);
+  --ring: oklch(0.62 0.19 27);
+
+  /* Trạng thái nghiệp vụ — dùng cho chip/badge trạng thái */
+  --status-pending: oklch(0.795 0.15 86);
+  --status-approved: oklch(0.52 0.14 148); /* xanh lá VJU (#1f701f từ logo) */
+  --status-rejected: oklch(0.577 0.245 27.325);
+  --status-neutral: #666666;
+
+  /* Màn chọn vai trò / đăng nhập — đỏ đậm VJU (maroon).
+     Sidebar cán bộ KHÔNG dùng bộ này (nó nền trắng), giống hệt reference. */
+  --sidebar: oklch(0.34 0.12 25);
+  --sidebar-foreground: oklch(0.97 0.02 20);
+  --sidebar-muted: oklch(0.82 0.06 20);
+  --sidebar-accent: oklch(1 0 0 / 10%);
+  --sidebar-active: oklch(0.57 0.22 27);
+  --sidebar-active-foreground: oklch(0.99 0 0);
+  --sidebar-border: oklch(1 0 0 / 14%);
+}
+
+.dark {
+  --background: oklch(0.129 0.042 264.695);
+  --foreground: oklch(0.984 0.003 247.858);
+  --card: oklch(0.208 0.042 265.755);
+  --card-foreground: oklch(0.984 0.003 247.858);
+  --popover: oklch(0.208 0.042 265.755);
+  --popover-foreground: oklch(0.984 0.003 247.858);
+  --primary: oklch(0.62 0.2 27);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.279 0.041 260.031);
+  --secondary-foreground: oklch(0.984 0.003 247.858);
+  --muted: oklch(0.279 0.041 260.031);
+  --muted-foreground: oklch(0.704 0.04 256.788);
+  --accent: oklch(0.279 0.041 260.031);
+  --accent-foreground: oklch(0.984 0.003 247.858);
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.984 0.003 247.858);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.551 0.027 264.364);
+}
+
+@theme inline {
+  --font-sans:
+    'Roboto', system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-status-pending: var(--status-pending);
+  --color-status-approved: var(--status-approved);
+  --color-status-rejected: var(--status-rejected);
+  --color-status-neutral: var(--status-neutral);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-active: var(--sidebar-active);
+  --color-sidebar-active-foreground: var(--sidebar-active-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+    outline-color: color-mix(in oklch, var(--color-ring) 50%, transparent);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Ghim icon chọn ngày/giờ (native) SÁT MÉP PHẢI ô — ăn cho cả date lẫn time
+     (cách flex:1 không đáng tin với type=time). Chừa chỗ để chữ không đè icon. */
+  input[type='date'],
+  input[type='time'],
+  input[type='datetime-local'] {
+    position: relative;
+  }
+  input[type='date']::-webkit-datetime-edit,
+  input[type='time']::-webkit-datetime-edit,
+  input[type='datetime-local']::-webkit-datetime-edit {
+    padding-right: 1.25rem;
+  }
+  input[type='date']::-webkit-calendar-picker-indicator,
+  input[type='time']::-webkit-calendar-picker-indicator,
+  input[type='datetime-local']::-webkit-calendar-picker-indicator {
+    position: absolute;
+    right: 0.6rem;
+    top: 50%;
+    transform: translateY(-50%);
+    margin: 0;
+    cursor: pointer;
+  }
+}
