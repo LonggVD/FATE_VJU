@@ -1,6 +1,6 @@
 import { ChevronRight } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { NAV_HOME, getAllowedGroups } from '@/constants/nav';
+import { NAV_GUIDE, NAV_HOME, getAllowedGroups } from '@/constants/nav';
 import { cn } from '@/lib/utils';
 
 /**
@@ -34,22 +34,9 @@ export function AppSidebar({
         collapsed ? 'lg:w-16 lg:items-center lg:px-2' : 'lg:w-64',
       )}
     >
-      {/* Màn hình chính */}
-      <button
-        type="button"
-        onClick={() => onNavigate(NAV_HOME.key, null)}
-        title={collapsed ? NAV_HOME.label : undefined}
-        className={cn(
-          'flex items-center rounded-lg text-sm font-medium transition-colors',
-          collapsed ? 'size-10 justify-center' : 'gap-2.5 px-3 py-2',
-          page === NAV_HOME.key
-            ? 'bg-muted text-foreground font-semibold'
-            : 'text-foreground hover:bg-muted',
-        )}
-      >
-        <NAV_HOME.icon className="size-4.5 shrink-0" />
-        {!collapsed && NAV_HOME.label}
-      </button>
+      {/* Hai muc ghim tren cung: man hinh chinh + huong dan su dung. */}
+      <PinnedNavItem item={NAV_HOME} page={page} collapsed={collapsed} onNavigate={onNavigate} />
+      <PinnedNavItem item={NAV_GUIDE} page={page} collapsed={collapsed} onNavigate={onNavigate} />
 
       {!collapsed && (
         <p className="text-muted-foreground/70 px-3 pt-4 pb-1 text-[11px] font-semibold tracking-wide uppercase">
@@ -70,6 +57,27 @@ export function AppSidebar({
         />
       ))}
     </aside>
+  );
+}
+
+/** Muc don ghim tren cung (Thoi khoa bieu, Huong dan su dung) - khong xo ra. */
+function PinnedNavItem({ item, page, collapsed, onNavigate }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onNavigate(item.key, null)}
+      title={collapsed ? item.label : undefined}
+      className={cn(
+        'flex items-center rounded-lg text-sm font-medium transition-colors',
+        collapsed ? 'size-10 justify-center' : 'gap-2.5 px-3 py-2',
+        page === item.key
+          ? 'bg-muted text-foreground font-semibold'
+          : 'text-foreground hover:bg-muted',
+      )}
+    >
+      <item.icon className="size-4.5 shrink-0" />
+      {!collapsed && item.label}
+    </button>
   );
 }
 

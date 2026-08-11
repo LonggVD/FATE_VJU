@@ -21,6 +21,7 @@ import {
   CalendarDays,
   ClipboardList,
   Clock,
+  HelpCircle,
   ListChecks,
   Save,
   ScrollText,
@@ -31,6 +32,17 @@ export const NAV_HOME = {
   key: 'schedule',
   label: 'Thời khoá biểu',
   icon: CalendarDays,
+};
+
+/**
+ * Muc don GHIM TREN CUNG thu hai, dong cap voi NAV_HOME - khong nam trong
+ * NAV_GROUPS ("Nghiep vu") vi day khong phai mot buoc trong quy trinh, ma la
+ * tai lieu tra cuu bat cu luc nao, danh cho ca hai vai tro.
+ */
+export const NAV_GUIDE = {
+  key: 'guide',
+  label: 'Hướng dẫn sử dụng',
+  icon: HelpCircle,
 };
 
 /**
@@ -79,12 +91,13 @@ export const NAV_GROUPS = [
   },
 ];
 
-// Vai tro "Xem thoi" chi vao duoc man chi-doc.
-export const VIEWER_ALLOWED_KEYS = ['schedule', 'history'];
+// Vai tro "Xem thoi" chi vao duoc man chi-doc + huong dan su dung.
+export const VIEWER_ALLOWED_KEYS = ['schedule', 'history', 'guide'];
 
 /** Nhan hien tren topbar / page header cho tung trang. */
 export const PAGE_LABELS = {
   schedule: NAV_HOME.label,
+  guide: NAV_GUIDE.label,
   ...Object.fromEntries(NAV_GROUPS.map((g) => [g.key, g.label])),
 };
 

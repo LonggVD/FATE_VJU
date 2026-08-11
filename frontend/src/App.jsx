@@ -15,6 +15,7 @@ import DataPage from "./presentation/pages/DataPage";
 import SchedulePage from "./presentation/pages/SchedulePage";
 import HistoryPage from "./presentation/pages/HistoryPage";
 import ManualEntryPage from "./presentation/pages/ManualEntryPage";
+import GuidePage from "./presentation/pages/GuidePage";
 import { readUrlState, writeUrlState } from "./adapters/urlState";
 
 const PAGES = {
@@ -22,6 +23,7 @@ const PAGES = {
   schedule: SchedulePage,
   history: HistoryPage,
   manual: ManualEntryPage,
+  guide: GuidePage,
 };
 
 // "Dang nhap" o day chi la chon vai trò (xem RolePickerScreen) - truoc day
