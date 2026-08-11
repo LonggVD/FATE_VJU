@@ -51,11 +51,18 @@ export function buildScheduleView({ data, guestResult, residentResult, inbox, fi
   const guestOverrides = guestResult?.overrides ?? {};
   const residentOverrides = residentResult?.overrides ?? {};
 
+  // Ma lop hoc phan (vd "CSE3003-1") de hien THAY CHO "#<id noi bo>" tren the/
+  // popup/hop thoai - id chi co nghia voi backend, giao vu nhan dien lop qua ma
+  // lop. lesson (tu guestResult/residentResult) khong tu co field nay, phai
+  // noi voi data.classes (bang mirror) qua sectionId.
+  const classCodeById = new Map((data?.classes ?? []).map((c) => [c.sectionId, c.classCode]));
+
   const withFlags = all.map((l) => {
     const ovMap = l.teacherType === "RESIDENT" ? residentOverrides : guestOverrides;
     const override = ovMap[l.id] ?? ovMap[String(l.id)] ?? null;
     return {
       ...l,
+      classCode: classCodeById.get(l.id) || null,
       problems: problemMap.get(l.id) ?? [],
       hasProblem: problemMap.has(l.id),
       override,

@@ -65,6 +65,9 @@ export function analyzeUnplaced(guestResult, data) {
 
   // sectionId -> windowSlots tho + duration
   const subById = new Map((data?.submissions ?? []).map((s) => [s.sectionId, s]));
+  // Ma lop hoc phan de hien THAY CHO "#<id noi bo>" (giong cach lam o
+  // scheduleView.js) - unplaced[] tu backend khong tu co field nay.
+  const classCodeById = new Map((data?.classes ?? []).map((c) => [c.sectionId, c.classCode]));
 
   const items = unplaced.map((u) => {
     const sub = subById.get(u.id);
@@ -72,9 +75,11 @@ export function analyzeUnplaced(guestResult, data) {
     const windowSlots = sub?.windowSlots ?? [];
 
     const windows = windowSlots.map((w) => {
-      const teacherBlockers = placed.filter(
-        (l) => l.teacherId === u.teacherId && overlaps(w, duration, l.slot, l.duration),
-      );
+      // classCode gan them vao TUNG buoi chan (khong chi buoi #u.id) - de UI
+      // hien "trung voi CSE3056 (#263)" thay vi trung so #263 kho hieu.
+      const teacherBlockers = placed
+        .filter((l) => l.teacherId === u.teacherId && overlaps(w, duration, l.slot, l.duration))
+        .map((l) => ({ ...l, classCode: classCodeById.get(l.id) || null }));
       const sameRoomCount = placed.filter(
         (l) => l.roomType === u.roomType && overlaps(w, duration, l.slot, l.duration),
       ).length;
@@ -115,6 +120,7 @@ export function analyzeUnplaced(guestResult, data) {
 
     return {
       ...u,
+      classCode: classCodeById.get(u.id) || null,
       duration,
       windowSlots,
       windows,

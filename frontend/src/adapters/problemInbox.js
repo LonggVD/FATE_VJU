@@ -157,6 +157,12 @@ function looksDuplicated(a, b) {
 export function buildProblemInbox(data, guestResult, residentResult = null, pendingMove = null) {
   if (!data) return { items: [], counts: {}, total: 0, byType: {} };
 
+  // Ma lop hoc phan (vd "CSE3003-1") de hien THAY CHO "#<id noi bo>" o moi cho
+  // (title cap dung gio, cac the trong "Chi tiet") - id noi bo khong noi len gi
+  // voi giao vu, ho nhan lop qua ma lop.
+  const classCodeById = new Map((data?.classes ?? []).map((c) => [c.sectionId, c.classCode]));
+  const codeOf = (id) => classCodeById.get(id) || `#${id}`;
+
   const sq = analyzeSubmissions(data);
   const slotsPerDay = sq.slotsPerDay;
   // analyzeUnplaced doc guestResult.lessons de tim buoi nao DANG CHIEM CHO cua
@@ -224,11 +230,14 @@ export function buildProblemInbox(data, guestResult, residentResult = null, pend
       teacherId,
       teacherName: a.teacherName,
       sectionIds: [a.sectionId, b.sectionId],
-      sections: [a, b],
+      sections: [
+        { ...a, classCode: classCodeById.get(a.sectionId) },
+        { ...b, classCode: classCodeById.get(b.sectionId) },
+      ],
       day,
       when,
       whenShort,
-      title: `#${a.sectionId} ⟷ #${b.sectionId}`,
+      title: `${codeOf(a.sectionId)} ⟷ ${codeOf(b.sectionId)}`,
       // Dong gon cho trang thai thu gon - chi ten mon, khong lap lai gio.
       brief: a.courseName === b.courseName ? a.courseName : `${a.courseName} / ${b.courseName}`,
       detail: dup
@@ -269,11 +278,14 @@ export function buildProblemInbox(data, guestResult, residentResult = null, pend
     }`;
     // Uu tien dong da co san trong "khung gio da bao" (co day du ten CTDT/dieu
     // phoi vien); buoi co huu khong co dong do thi dung thang du lieu cua lesson.
-    const nhu = (l) => rowById.get(l.id) ?? {
-      sectionId: l.id, teacherId: l.teacherId, teacherName: l.teacherName,
-      courseName: l.courseName, programLabel: l.programLabel,
-      coordinator: l.coordinator, duration: l.duration, windowSlots: [l.slot],
-    };
+    const nhu = (l) => ({
+      ...(rowById.get(l.id) ?? {
+        sectionId: l.id, teacherId: l.teacherId, teacherName: l.teacherName,
+        courseName: l.courseName, programLabel: l.programLabel,
+        coordinator: l.coordinator, duration: l.duration, windowSlots: [l.slot],
+      }),
+      classCode: classCodeById.get(l.id),
+    });
     const ra = nhu(a);
     const rb = nhu(b);
     const dangCho = pendingMove
@@ -289,7 +301,7 @@ export function buildProblemInbox(data, guestResult, residentResult = null, pend
       day,
       when,
       whenShort,
-      title: `#${a.id} ⟷ #${b.id}`,
+      title: `${codeOf(a.id)} ⟷ ${codeOf(b.id)}`,
       brief: ra.courseName === rb.courseName ? ra.courseName : `${ra.courseName} / ${rb.courseName}`,
       detail: trungLap
         ? `${ra.courseName} — hai dòng giống hệt nhau: cùng giảng viên, cùng mã lớp, cùng ${when}.`
@@ -326,11 +338,11 @@ export function buildProblemInbox(data, guestResult, residentResult = null, pend
         teacherId: u.teacherId,
         teacherName: u.teacherName,
         sectionIds: [u.id, ...u.blockers.map((b) => b.lesson.id)],
-        sections: row ? [row] : [],
+        sections: row ? [{ ...row, classCode: classCodeById.get(u.id) }] : [],
         day: u.windows[0]?.day ?? null,
         when: u.windows[0]?.label ?? "—",
         whenShort: u.windows[0] ? `T${u.windows[0].day + 2}` : "—",
-        title: `#${u.id}`,
+        title: codeOf(u.id),
         brief: u.courseName,
         detail: `${u.courseName} — ${REASON_META[u.reason].label.toLowerCase()}.`,
         coordinators: [u.coordinator].filter(Boolean),
@@ -355,7 +367,7 @@ export function buildProblemInbox(data, guestResult, residentResult = null, pend
       teacherId: null,
       teacherName: null,
       sectionIds: list.map((r) => r.sectionId),
-      sections: list,
+      sections: list.map((r) => ({ ...r, classCode: classCodeById.get(r.sectionId) })),
       day: null,
       when: null,
       whenShort: `${list.length} buổi`,
@@ -363,11 +375,11 @@ export function buildProblemInbox(data, guestResult, residentResult = null, pend
       title: coordinator,
       brief: list
         .slice(0, 4)
-        .map((r) => `#${r.sectionId}`)
+        .map((r) => codeOf(r.sectionId))
         .join(" ") + (list.length > 4 ? ` +${list.length - 4}` : ""),
       detail: `${coordinator} phụ trách — ${list
         .slice(0, 3)
-        .map((r) => `#${r.sectionId}`)
+        .map((r) => codeOf(r.sectionId))
         .join(", ")}${list.length > 3 ? `, +${list.length - 3}` : ""}.`,
       coordinators: [coordinator],
     });
@@ -392,5 +404,9 @@ export function buildProblemInbox(data, guestResult, residentResult = null, pend
     missingHoursCount: sq.queue.length,
     slotsPerDay,
     numDays: sq.numDays,
+    // Da tinh san o tren (unplacedReport, dung ca cho phan "Khong xep duoc" cua
+    // items) - tra ra luon de tab "Chua xep duoc" (ProblemInbox) dung lai,
+    // khong phai tinh trung mot lan nua.
+    unplacedReport,
   };
 }

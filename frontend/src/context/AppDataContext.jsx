@@ -178,6 +178,14 @@ export function AppDataProvider({ children }) {
     },
   ), [runAction]);
 
+  // "Buoc 1: chuan hoa du lieu" - doi nguon gio 1 dong dang xem truoc. KHONG
+  // setData: pending['data'] moi doi, chua ghi gi vao STATE['data'] thuc (chi
+  // doImportCommit moi lam vay) - dialog tu giu ban preview moi tra ve.
+  const doImportFixTimeRow = useCallback((excelRow, source) => runAction(
+    () => scheduler.importFixTimeRow(excelRow, source),
+    { errorPrefix: "Không đổi được nguồn giờ" },
+  ), [runAction]);
+
   const doImportCommit = useCallback(() => runAction(
     () => scheduler.importCommit(),
     {
@@ -267,7 +275,7 @@ export function AppDataProvider({ children }) {
     data, guestResult, residentResult, loading, error,
     refreshData, doSubmitAvailability,
     solveGuest, solveResident, doMoveLesson, doClearOverride, doSaveSchedule,
-    initManual, doImportPreview, doImportCommit,
+    initManual, doImportPreview, doImportFixTimeRow, doImportCommit,
     addManualTeacher, updateManualTeacher,
     addManualCourse, updateManualCourse,
     addManualSection, updateManualSection, deleteManualSection, doClearManualTimes,

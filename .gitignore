@@ -1,0 +1,17 @@
+# Du lieu THAT (email/SDT giang vien, du lieu sinh vien VJU) - khong track de
+# tranh lo them qua cac lan commit sau. Cac ban da commit truoc day van con
+# trong lich su git/GitHub, file nay chi chan tu bay gio.
+FATE.TKB.HK1 2026-2027.xlsx
+FATE.TKB.HK2_2025-2026.xlsx
+webapp/manual_state_snapshot.json
+webapp/real_data.json
+fate_full.txt
+real_data_check_report.txt
+real_fate_solve_report.txt
+
+# Build artifact Python - khong phai source, sinh lai tu .py moi lan chay.
+webapp/__pycache__/
+*.pyc
+
+# Runtime/tooling cua Claude Code - khong lien quan den ma nguon du an.
+.claude/scheduled_tasks.lock

@@ -14,7 +14,7 @@ export default function PendingMoveBanner({ pending, fromLabel, toLabel, onSave,
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-2.5 text-sm">
       <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
         <strong className="truncate">
-          #{pending.sectionId} {pending.lesson.courseName}
+          {pending.lesson.classCode || `#${pending.sectionId}`} {pending.lesson.courseName}
         </strong>
         <span className="text-muted-foreground inline-flex items-center gap-1.5">
           {fromLabel}

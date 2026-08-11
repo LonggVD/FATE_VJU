@@ -277,6 +277,13 @@ export default function SchedulePage({ role, filter, onFilterChange }) {
       activeId={activeProblem?.id ?? null}
       onPick={pickProblem}
       onClear={() => setActiveProblem(null)}
+      // Tab "Chua xep duoc": bam 1 khung gio con trong la GHIM luon buoi vao do -
+      // dung lai chinh doMoveLesson() ma keo-tha tren luoi dang dung, khong viet
+      // duong rieng. Khong kem reason: cac khung goi y da duoc loc chi con o
+      // KHONG bi trung GV/het phong (xem unplacedAnalysis.js), nen thuong di
+      // thang, 409 (hiem, vd 2 giao vu bam gan nhau) se hien qua thong bao loi
+      // ngay trong tab.
+      onPlace={(sectionId, slot) => doMoveLesson(sectionId, slot)}
     />
   );
 

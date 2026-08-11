@@ -21,6 +21,10 @@ export const initManual = () => apiPost("/api/manual/init");
 // Nap file ke hoach giang day cu vao form. HAI BUOC: xem truoc (khong ghi gi,
 // chi doc file va bao se ra cai gi) roi moi commit (ghi de toan bo du lieu).
 export const importPreview = (file) => apiUpload("/api/manual/import/preview", file);
+// "Buoc 1: chuan hoa du lieu" - doi nguon gio (text/structured) cho 1 dong dang
+// xem truoc, TRUOC khi nap chinh thuc (importCommit = buoc 2).
+export const importFixTimeRow = (excelRow, source) =>
+  apiPost("/api/manual/import/apply-time-fix", { excelRow, source });
 export const importCommit = () => apiPost("/api/manual/import/commit");
 export const addManualTeacher = (payload) => apiPost("/api/manual/teacher", payload);
 export const updateManualTeacher = (teacherId, payload) => apiPatch(`/api/manual/teacher/${teacherId}`, payload);

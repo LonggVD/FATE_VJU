@@ -193,7 +193,7 @@ export default function SectionEditDrawer({ data, section, onClose, onDuplicated
     <Drawer
       open
       onOpenChange={(o) => !o && onClose()}
-      title={section ? `Sửa lớp #${section.sectionId}` : "Thêm lớp mới"}
+      title={section ? `Sửa lớp ${section.classCode || `#${section.sectionId}`}` : "Thêm lớp mới"}
       description={section?.courseName || undefined}
       footer={
         <>

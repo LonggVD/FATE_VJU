@@ -21,7 +21,7 @@ import {
  * (bao nhieu lop/hoc phan/GV, bao nhieu dong bi bo va vi sao) truoc khi quyet.
  */
 export default function ImportExcelDialog({ open, onOpenChange }) {
-  const { loading, doImportPreview, doImportCommit } = useAppData();
+  const { loading, doImportPreview, doImportFixTimeRow, doImportCommit } = useAppData();
   const inputRef = useRef(null);
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -42,6 +42,17 @@ export default function ImportExcelDialog({ open, onOpenChange }) {
     setError(null);
     try {
       setPreview(await doImportPreview(f));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  // "Buoc 1: chuan hoa du lieu" - doi nguon gio 1 dong TRUOC khi nap. Ket qua
+  // tra ve la ban preview MOI (data/summary/timeReviews da tinh lai) - chi can
+  // gan de len, chua ghi gi vao STATE thuc ca (chi handleCommit moi lam vay).
+  const handleFixTime = async (excelRow, source) => {
+    try {
+      setPreview(await doImportFixTimeRow(excelRow, source));
     } catch (err) {
       setError(err.message);
     }
@@ -146,6 +157,16 @@ export default function ImportExcelDialog({ open, onOpenChange }) {
                 Mọi dòng có dữ liệu trong file đều được nạp — kể cả lớp chưa có giảng viên.
               </p>
 
+              {/* Buoc 1: CHUAN HOA DU LIEU - xac nhan/doi lai nguon gio cho tung
+                  lop truoc khi qua buoc 2 (nap vao he thong). Dat TRUOC cac
+                  ChiTiet canh bao chung, vi day la viec CAN LAM, khong chi la
+                  thong tin doc qua. */}
+              <TimeReviewSection
+                reviews={preview.timeReviews}
+                onFix={handleFixTime}
+                disabled={loading}
+              />
+
               {s.soDongBoQua > 0 && (
                 <ChiTiet
                   tone="amber"
@@ -160,7 +181,9 @@ export default function ImportExcelDialog({ open, onOpenChange }) {
                   tone="blue"
                   tieuDe={`${s.soCanhBao} dòng có lưu ý (vẫn được nạp)`}
                   moTa="Những dòng này VẪN vào form, nhưng có chỗ hệ thống phải tự quyết — nên biết để rà lại:"
-                  nhom={preview.warningGroups}
+                  // "lech_nguon_gio" da co man rieng (TimeReviewSection ngay
+                  // tren) - loc ra de khong liet ke trung lap o day.
+                  nhom={preview.warningGroups.filter((g) => g.loai !== "lech_nguon_gio")}
                 />
               )}
 
@@ -197,6 +220,88 @@ export default function ImportExcelDialog({ open, onOpenChange }) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * "Buoc 1: chuan hoa du lieu" - file co 2 cot ghi gio (text tu do / Thu-Tiet
+ * dau-Tiet cuoi cau truc) hay LECH NHAU trong du lieu that (xem
+ * NHAP-DU-LIEU-TU-EXCEL.md). He thong tu chon 1 ben theo mac dinh (uu tien
+ * text) hoac tu phat hien duoc nhom chac chan (certain=true, vd 2 lop cung
+ * hoc phan bi copy sot 1 cot), nhung phan CON LAI (certain=false) van chi la
+ * DOAN, khong the tu tin - giao vu phai TU MAT xem va chon lai truoc khi qua
+ * buoc 2 (nap vao he thong), thay vi am tham tin theo mac dinh nhu truoc.
+ */
+function TimeReviewSection({ reviews, onFix, disabled }) {
+  if (!reviews?.length) return null;
+  const canXemLai = reviews.filter((r) => !r.certain).length;
+
+  return (
+    <details className="rounded-lg border border-violet-500/30 bg-violet-500/10" open>
+      <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+        Xác nhận giờ học — {reviews.length} lớp có 2 nguồn giờ khác nhau
+        {canXemLai > 0 && (
+          <span className="ml-2 rounded-full bg-amber-500/20 px-2 py-0.5 text-xs font-normal text-amber-700">
+            {canXemLai} cần xem lại
+          </span>
+        )}
+      </summary>
+      <div className="space-y-2 px-3 pb-3 text-xs">
+        <p className="text-muted-foreground">
+          File có 2 cột ghi giờ (text tự do và Thứ/Tiết đầu/Tiết cuối) — dưới đây là các lớp
+          mà 2 cột ghi khác nhau. Bấm để chọn giờ đúng cho từng lớp trước khi nạp vào hệ thống.
+        </p>
+        <div className="max-h-72 space-y-1.5 overflow-y-auto">
+          {reviews.map((r) => (
+            <div key={r.excelRow} className="bg-background/60 rounded-md border p-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-1.5">
+                <p className="font-medium">
+                  {r.classCode || `Dòng ${r.excelRow}`}
+                  <span className="text-muted-foreground font-normal"> · {r.courseName} — {r.teacherName}</span>
+                </p>
+                {r.certain ? (
+                  <span className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-emerald-700">
+                    đã tự phát hiện
+                  </span>
+                ) : (
+                  <span className="shrink-0 rounded-full bg-amber-500/20 px-2 py-0.5 text-amber-700">
+                    cần xem lại
+                  </span>
+                )}
+              </div>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onFix(r.excelRow, "text")}
+                  className={
+                    "rounded-md border px-2 py-1 text-left disabled:opacity-60" +
+                    (r.chosen === "text"
+                      ? " border-violet-500 bg-violet-500/15 font-medium"
+                      : " hover:bg-muted/60")
+                  }
+                >
+                  Cột text: {r.textLabel}
+                </button>
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onFix(r.excelRow, "structured")}
+                  className={
+                    "rounded-md border px-2 py-1 text-left disabled:opacity-60" +
+                    (r.chosen === "structured"
+                      ? " border-violet-500 bg-violet-500/15 font-medium"
+                      : " hover:bg-muted/60")
+                  }
+                >
+                  Cột cấu trúc: {r.structuredLabel}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </details>
   );
 }
 

@@ -31,7 +31,7 @@ export default function SaveMoveDialog({ pending, fromLabel, toLabel, onConfirm,
         {pending && (
           <div className="bg-muted/40 space-y-2 rounded-lg border p-3 text-sm">
             <p className="font-medium">
-              #{pending.sectionId} {pending.lesson.courseName}
+              {pending.lesson.classCode || `#${pending.sectionId}`} {pending.lesson.courseName}
             </p>
             <p className="text-muted-foreground flex flex-wrap items-center gap-2">
               <span className="text-foreground rounded-md border bg-background px-2 py-0.5">

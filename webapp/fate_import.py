@@ -136,6 +136,101 @@ def _nums(v):
     return out
 
 
+def _text_sessions(row, layout, col):
+    """Buoi doc duoc tu cot text tu do (rong neu layout khong co cot nay hoac
+    khong parse duoc gi) - tach rieng khoi _structured_sessions() de so sanh
+    hai nguon truoc khi quyet dinh dung nguon nao (xem _group_time_overrides)."""
+    if layout.get("timeText") is None:
+        return []
+    try:
+        sessions, _ = sc._parse_time_text(col(row, "timeText"))
+    except Exception:
+        sessions = []
+    return sessions or []
+
+
+def _structured_sessions(row, layout, col):
+    """Buoi doc duoc tu 3 cot Thu/Tiet dau/Tiet cuoi, ghep theo VI TRI (xem chi
+    thich chi tiet o _group_time_overrides/read_rows)."""
+    thus = _nums(col(row, "thu"))
+    tds = _nums(col(row, "tietDau"))
+    tcs = _nums(col(row, "tietCuoi"))
+    out = []
+    for k in range(max(len(thus), len(tds), len(tcs))):
+        t = thus[k] if k < len(thus) else (thus[-1] if thus else None)
+        d = tds[k] if k < len(tds) else None
+        e = tcs[k] if k < len(tcs) else None
+        if None in (t, d, e):
+            continue
+        out.append((int(t) - 2, int(d), int(e)))
+    return out
+
+
+def _course_group_ids(raw_rows, col):
+    """Danh so nhom hoc phan cho tung dong RAW, dung DUNG luat 'doi ten hoc
+    phan -> nhom moi' ma read_rows() dung de ke thua carry (xem chi thich o do)
+    - tach rieng ra day de dung truoc CA HAI vong (phat hien trung lap va vong
+    chinh), khong phai vi day la logic doc lap."""
+    ids, gid, last_name = [], -1, None
+    for row in raw_rows:
+        ten_rieng = _text(col(row, "courseName"))
+        if ten_rieng and _chuan(ten_rieng) != _chuan(last_name or ""):
+            gid += 1
+            last_name = ten_rieng
+        elif gid == -1:
+            gid = 0
+        ids.append(gid)
+    return ids
+
+
+def _group_time_overrides(raw_rows, layout, col, group_ids):
+    """Bat loi 'copy dong lam lop 2 nhung quen sua 1 trong 2 cot gio' - kieu loi
+    da gap that trong file HK1 2026-2027 (lop CSE3003-1/CSE3003-2: cot text
+    "Thời gian" giu y NGUYEN chu cu, "Thứ/Tiết đầu/Tiết cuối" moi la cot da sua
+    dung cho lop 2; nguoc lai voi "Giải tích 1" VJU2002-1/2 - cot cau truc moi
+    la ban giu nguyen, text la cot da sua dung). Hai truong hop doi cho nhau
+    nen KHONG the chon co dinh 1 nguon - dau hieu dang tin la SU TRUNG LAP:
+    trong cung 1 hoc phan (nhieu lop), nguon nao GIU Y NGUYEN mot gia tri cho
+    MOI lop trong khi nguon kia phan biet ro tung lop, thi nguon giu-y-nguyen
+    do la ban chua-sua-het, nguon con lai moi dung.
+
+    Tra ve dict {group_id: "text"|"structured"} - CHI ghi cho nhom PHAT HIEN
+    RO trung lap 1 chieu (>=2 lop co CA HAI nguon, dung 1 nguon giong nhau tuyet
+    doi giua moi lop con nguon kia khac nhau); nhom con lai (mo ho, hoac ca hai
+    nguon deu giong/deu khac nhau) KHONG co trong dict - giu dung hanh vi mac
+    dinh cu (uu tien text) nhu tu truoc, vi khong co tin hieu nao de tin chon
+    khac di."""
+    by_group = {}
+    for i, row in enumerate(raw_rows):
+        ts = _text_sessions(row, layout, col)
+        st = _structured_sessions(row, layout, col)
+        if not ts or not st:
+            continue  # can CA HAI nguon co gia tri moi so sanh duoc
+        by_group.setdefault(group_ids[i], []).append((tuple(sorted(ts)), tuple(sorted(st))))
+
+    overrides = {}
+    for gid, pairs in by_group.items():
+        if len(pairs) < 2:
+            continue
+        texts = {p[0] for p in pairs}
+        structs = {p[1] for p in pairs}
+        if len(texts) == 1 and len(structs) > 1:
+            overrides[gid] = "structured"
+        elif len(structs) == 1 and len(texts) > 1:
+            overrides[gid] = "text"  # da la mac dinh, ghi lai chi de ro rang
+    return overrides
+
+
+_DAY_LABELS_VN = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"]
+
+
+def _session_label(session):
+    day, p_start, p_end = session
+    if day is None:
+        return "chưa có giờ"
+    return f"{_DAY_LABELS_VN[day]}, tiết {p_start}-{p_end}"
+
+
 def detect_layout(workbook):
     """Nhan dien dang file theo ten sheet. Tra ve (ten_sheet, layout) hoac
     (None, None) neu khong khop dang nao da biet."""
@@ -151,10 +246,14 @@ def read_rows(source):
     `source` la duong dan hoac doi tuong file-like (vd stream cua file upload).
 
     ket_qua = {
-      "sheet":     ten sheet da dung,
-      "rows":      danh sach dong chuan hoa (moi dong = 1 LOP se tao trong form),
-      "skipped":   danh sach {row, reason} - dong bi bo qua va vi sao,
-      "warnings":  danh sach {row, message} - dong VAN nap nhung co diem can biet,
+      "sheet":       ten sheet da dung,
+      "rows":        danh sach dong chuan hoa (moi dong = 1 LOP se tao trong form),
+      "skipped":     danh sach {row, reason} - dong bi bo qua va vi sao,
+      "warnings":    danh sach {row, message} - dong VAN nap nhung co diem can biet,
+      "timeReviews": danh sach lop co 2 nguon gio (text/cau truc) khac nhau -
+                     "buoc 1: chuan hoa du lieu" o UI, giao vu xem/doi chieu
+                     source dang dung TRUOC khi nap (buoc 2) - xem
+                     app.py: api_manual_import_apply_time_fix.
     }
 
     Mot dong Excel co the sinh ra NHIEU dong ket qua: khi o thoi gian ghi nhieu
@@ -185,11 +284,17 @@ def read_rows(source):
             return None
         return row[idx]
 
-    rows, skipped, warnings = [], [], []
+    rows, skipped, warnings, time_reviews = [], [], [], []
     # Excel gop o theo chieu doc cho cac cot muc hoc phan -> dong sau de trong,
     # phai nho lai gia tri dong truoc (dung cach load_real_fate_data lam).
     carry = {"courseCode": None, "courseName": None, "credits": None,
              "classCode": None, "ltCredits": None, "thCredits": None}
+
+    # Xem truoc ca file 1 luot (chi de nhom hoc phan + so sanh 2 nguon gio) -
+    # PHAI lam TRUOC vong chinh vi can biet ca cac dong "anh em" phia sau moi
+    # nhom moi ket luan duoc nguon nao dang tin (xem _group_time_overrides).
+    group_ids = _course_group_ids(raw_rows, col)
+    time_overrides = _group_time_overrides(raw_rows, layout, col, group_ids)
 
     for i, row in enumerate(raw_rows):
         excel_row = i + layout["header_row"]
@@ -269,31 +374,53 @@ def read_rows(source):
 
         # --- Thoi gian ---
         # Layout CU co cot text tu do va da duoc xac minh la DANG TIN HON cot
-        # Thu/Tiet (hai nguon nay hay lech nhau trong file goc) -> uu tien text.
-        # Ghep 3 cot Thu / Tiet dau / Tiet cuoi theo VI TRI: gia tri thu k cua moi
-        # cot thuoc cung mot buoi. Rieng cot Thu hay chi ghi MOT lan roi dung cho
-        # ca hai buoi (vd Thu='2', Tiet dau='2\n6') - luc do lay gia tri cuoi cung
-        # da doc duoc.
-        thus = _nums(col(row, "thu"))
-        tds = _nums(col(row, "tietDau"))
-        tcs = _nums(col(row, "tietCuoi"))
-        structured = []
-        for k in range(max(len(thus), len(tds), len(tcs))):
-            t = thus[k] if k < len(thus) else (thus[-1] if thus else None)
-            d = tds[k] if k < len(tds) else None
-            e = tcs[k] if k < len(tcs) else None
-            if None in (t, d, e):
-                continue
-            structured.append((int(t) - 2, int(d), int(e)))
+        # Thu/Tiet (hai nguon nay hay lech nhau trong file goc) -> uu tien text
+        # theo MAC DINH khi khong co dau hieu nao khac. Ghep 3 cot Thu / Tiet
+        # dau / Tiet cuoi theo VI TRI: gia tri thu k cua moi cot thuoc cung mot
+        # buoi. Rieng cot Thu hay chi ghi MOT lan roi dung cho ca hai buoi (vd
+        # Thu='2', Tiet dau='2\n6') - luc do lay gia tri cuoi cung da doc duoc.
+        text_sessions = _text_sessions(row, layout, col)
+        structured = _structured_sessions(row, layout, col)
 
-        sessions = []
-        if layout.get("timeText") is not None:
-            try:
-                sessions, _ = sc._parse_time_text(col(row, "timeText"))
-            except Exception:
-                sessions = []
-            if not sessions:
-                sessions = structured
+        # Nhom hoc phan nay co dau hieu 1 trong 2 cot bi "quen sua" khi copy
+        # dong tao lop thu 2 (xem _group_time_overrides) -> DAO nguoc uu tien
+        # cho DUNG cac dong lien quan, danh dau certain=True (he thong CHAC).
+        # Cac dong lech khac (khong co dau hieu ro) van duoc dua vao
+        # time_reviews (certain=False, van dung MAC DINH cu) - giao vu XEM va
+        # SUA truoc khi nap, thay vi am tham tin 1 ben nhu ban dau.
+        override = time_overrides.get(group_ids[i])
+        chosen_source = override or ("text" if text_sessions else "structured")
+
+        # CHI xet lech khi CA HAI nguon co DUNG 1 buoi (bo qua truong hop nhieu
+        # buoi/o - hiem va phuc tap hoa man xem lai khong dang) VA hai gia tri
+        # THUC SU khac nhau.
+        if len(text_sessions) == 1 and len(structured) == 1 and text_sessions[0] != structured[0]:
+            time_reviews.append({
+                "excelRow": excel_row,
+                "classCode": carry["classCode"] or "",
+                "courseName": carry["courseName"],
+                "teacherName": names[0],
+                "chosen": chosen_source,
+                "certain": override is not None,
+                "text": {"day": text_sessions[0][0], "periodStart": text_sessions[0][1], "periodEnd": text_sessions[0][2]},
+                "structured": {"day": structured[0][0], "periodStart": structured[0][1], "periodEnd": structured[0][2]},
+                "textLabel": _session_label(text_sessions[0]),
+                "structuredLabel": _session_label(structured[0]),
+            })
+            warnings.append({
+                "row": excel_row, "kind": "lech_nguon_gio",
+                "detail": (
+                    f"2 nguồn giờ khác nhau — cột text: {_session_label(text_sessions[0])}; "
+                    f"cột cấu trúc: {_session_label(structured[0])}. Đang dùng "
+                    f"{'cột cấu trúc' if chosen_source == 'structured' else 'cột text'}"
+                    + (" (đã tự phát hiện trùng lặp)" if override is not None else " (mặc định — cần xem lại ở bước xem trước)")
+                ),
+            })
+
+        if chosen_source == "structured" and structured:
+            sessions = structured
+        elif text_sessions:
+            sessions = text_sessions
         else:
             sessions = structured
 
@@ -349,7 +476,10 @@ def read_rows(source):
                 "duration": (p_end - p_start + 1) if (p_start is not None and p_end is not None) else None,
             })
 
-    return {"sheet": sheet_name, "rows": rows, "skipped": skipped, "warnings": warnings}, None
+    return {
+        "sheet": sheet_name, "rows": rows, "skipped": skipped, "warnings": warnings,
+        "timeReviews": time_reviews,
+    }, None
 
 
 def summarize(result):

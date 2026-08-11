@@ -538,16 +538,20 @@ def _load_snapshot():
     STATE["extra"] = snap.get("extra")
 
 
-def _parse_class_time(body, slots_per_day, teacher_type=None):
+def _parse_class_time(body, slots_per_day, teacher_type=None, enforce_cap=True):
     """Doc {day, periodStart, periodEnd, autoSchedule} tu body 1 lop nhap tay -
     day gio da CHOT boi con nguoi cho dung lop nay (khac voi 'khung gio ranh cua
     GV' o /api/manual/teacher, von la nhieu lua chon de GV/dieu phoi vien khai
     bao roi solver moi chon 1). Tra ve (time_dict, error) - time_dict la
     {'day','period_start','period_end'} hoac None neu tick 'de he thong tu xep'
     hoac de trong ca 3 truong; error la str neu du lieu nhap sai dinh dang/khoang.
-    teacher_type (neu co): chan luon Thu vuot qua quy dinh (thinh giang toi
-    Thu 7, co huu toi Thu 6) - giao vu go tay cung khong lach duoc rang buoc
-    ma solver dang tuan theo (xem sc.MAX_DAY_INDEX)."""
+    teacher_type (neu co): chan Thu vuot qua quy dinh (thinh giang toi Thu 7,
+    co huu toi Thu 6) - giao vu go tay khong lach duoc rang buoc ma solver dang
+    tuan theo (xem sc.MAX_DAY_INDEX). enforce_cap=False (danh cho luong NAP FILE
+    hang loat - xem _build_manual_data_from_rows): file that co dong vi pham
+    (vd lop thuc tap co huu xep Chu nhat) - KHONG duoc lam RUNG ca lop (mat het
+    thong tin GV/SV/hoc phan), tra ve (None, None) NHU CHUA CO GIO de giao vu tu
+    gan lai, thay vi loi cung lam _build_manual_data_from_rows() bo hang lop do."""
     if body.get("autoSchedule"):
         return None, None
     day, p_start, p_end = body.get("day"), body.get("periodStart"), body.get("periodEnd")
@@ -560,6 +564,8 @@ def _parse_class_time(body, slots_per_day, teacher_type=None):
     if not (0 <= day <= 6) or p_start < 1 or p_end < p_start or p_end > slots_per_day:
         return None, "Thứ/Tiết không hợp lệ."
     if teacher_type is not None and day > sc.max_day_index(teacher_type):
+        if not enforce_cap:
+            return None, None
         max_label = _DAY_LABELS_VN[sc.max_day_index(teacher_type)]
         loai = "Thỉnh giảng" if teacher_type == "GUEST" else "Cơ hữu"
         return None, f"{loai} chỉ được dạy tới {max_label}."
@@ -601,12 +607,14 @@ def _apply_section_time(data, sid, teacher, duration, time_info):
         data["pending_section_ids"].append(sid)
 
 
-def _validate_section_body(data, body):
+def _validate_section_body(data, body, enforce_day_cap=True):
     """Doc + validate toan bo body cho 1 lop - dung chung cho POST tao moi va
     PATCH sua (PATCH doi hoi gui DU ca form, khong merge tung phan field-mot, de
     tranh tinh sai submissions khi chi doi 1 vai field ma thieu ngu canh gio/GV
     hien tai). Tra ve (fields, teacher, duration, time_info, None) neu hop le,
-    hoac (None, None, None, None, error_message) neu khong."""
+    hoac (None, None, None, None, error_message) neu khong.
+    enforce_day_cap=False: xem _parse_class_time - danh cho luong nap file, KHONG
+    danh cho nhap tay qua form (POST/PATCH /api/manual/section luon giu True)."""
     try:
         teacher_id = int(body["teacherId"])
     except (KeyError, TypeError, ValueError):
@@ -630,7 +638,9 @@ def _validate_section_body(data, body):
     if duration <= 0:
         return None, None, None, None, "Số tiết mỗi buổi dạy phải là số nguyên > 0."
 
-    time_info, time_err = _parse_class_time(body, data["params"]["slotsPerDay"], teacher["type"])
+    time_info, time_err = _parse_class_time(
+        body, data["params"]["slotsPerDay"], teacher["type"], enforce_cap=enforce_day_cap,
+    )
     if time_err:
         return None, None, None, None, time_err
 
@@ -924,10 +934,26 @@ def _build_manual_data_from_rows(rows):
         else:
             body["day"], body["periodStart"], body["periodEnd"] = r["day"], r["periodStart"], r["periodEnd"]
 
-        fields, teacher, duration, time_info, err = _validate_section_body(data, body)
+        # enforce_day_cap=False: file that co the co dong vi pham quy tac ngay
+        # (vd lop thuc tap co huu ghi Chu nhat) - KHONG duoc lam RUNG ca lop
+        # (mat het GV/SV/hoc phan chi vi 1 o gio sai), xem _parse_class_time.
+        fields, teacher, duration, time_info, err = _validate_section_body(
+            data, body, enforce_day_cap=False,
+        )
         if err:
             loi.append({"row": r["excelRow"], "reason": err})
             continue
+        if time_info is None and not r["autoSchedule"] and r["day"] is not None:
+            max_label = _DAY_LABELS_VN[sc.max_day_index(teacher["type"])]
+            loai = "Thỉnh giảng" if teacher["type"] == "GUEST" else "Cơ hữu"
+            canh_bao.append({
+                "row": r["excelRow"], "kind": "vuot_quy_dinh_ngay",
+                "detail": (
+                    f"{loai} \"{r['teacherName']}\" — {_DAY_LABELS_VN[r['day']]} vượt quy định "
+                    f"({loai} chỉ tới {max_label}) — đã bỏ giờ cố định, chuyển sang "
+                    f"\"để hệ thống tự xếp\", cần gán lại giờ"
+                ),
+            })
         sid = len(data["sections"])
         while sid in data["sections"]:
             sid += 1
@@ -960,6 +986,10 @@ _NHAN_LUU_Y = {
     "nhieu_buoi": "Dòng ghi nhiều buổi trong tuần — tách thành nhiều lớp cùng mã lớp",
     "gop_giang_vien": "Cùng một họ tên nhưng ghi nhiều đơn vị công tác khác nhau — "
                       "đã gộp làm một người và lấy đơn vị ghi đầu tiên",
+    "lech_nguon_gio": "2 nguồn giờ (cột text và cột Thứ/Tiết) ghi khác nhau — xem mục "
+                      "\"Xác nhận giờ học\" ở trên để chọn lại nguồn đúng cho từng lớp",
+    "vuot_quy_dinh_ngay": "Giờ trong file vượt quy định (thỉnh giảng tới Thứ 7, cơ hữu tới "
+                          "Thứ 6) — đã bỏ giờ cố định, chuyển \"để hệ thống tự xếp\", cần gán lại giờ",
 }
 
 
@@ -985,6 +1015,60 @@ def _gom_theo_loai(items, nhan_map):
     return sorted(out, key=lambda g: -g["so"])
 
 
+def _build_import_preview_response(result, data, loi, canh_bao_gv, file_name):
+    """Dung chung cho preview VA apply-time-fix (ket qua sau khi giao vu doi lai
+    nguon gio 1 dong) - tranh 2 endpoint tu dung 2 cach tinh summary/warningGroups
+    ma lech nhau.
+
+    "lech_nguon_gio" duoc DUNG LAI tu result['timeReviews'] (co the vua doi
+    'chosen' o apply-time-fix) chu khong dung warnings tinh san luc doc file -
+    neu khong, chu canh bao se noi ve lua chon CU sau khi giao vu vua sua."""
+    summary = fate_import.summarize(result)
+    summary["soLopDungDuoc"] = len(data["sections"])
+    summary["soGiangVien"] = len(data["teachers"])
+    summary["soHocPhan"] = len(data["courses"])
+
+    other_warnings = [w for w in result["warnings"] if w.get("kind") != "lech_nguon_gio"]
+    lech_gio_warnings = [
+        {
+            "row": r["excelRow"], "kind": "lech_nguon_gio",
+            "detail": (
+                f"cột text: {r['textLabel']}; cột cấu trúc: {r['structuredLabel']} — đang dùng "
+                f"{'cột cấu trúc' if r['chosen'] == 'structured' else 'cột text'}"
+                + (" (đã tự phát hiện trùng lặp)" if r["certain"] else " (mặc định — cần xem lại)")
+            ),
+        }
+        for r in result["timeReviews"]
+    ]
+    all_warnings = other_warnings + lech_gio_warnings
+    summary["soCanhBao"] = len(all_warnings) + len(canh_bao_gv)
+
+    return {
+        "fileName": file_name,
+        "summary": summary,
+        # Gom theo LOAI, khong cat top-20: so nhom it (2-3) nen gui het duoc, ma
+        # nguoi dung doc mot cai la biet ngay co bao nhieu kieu dong bi bo va moi
+        # kieu bao nhieu dong.
+        "skippedGroups": _gom_theo_loai(result["skipped"], _NHAN_BO_QUA),
+        "warningGroups": _gom_theo_loai(all_warnings + canh_bao_gv, _NHAN_LUU_Y),
+        "errors": loi[:20],
+        # "Buoc 1: chuan hoa du lieu" - moi dong 2 nguon gio lech nhau, giao vu
+        # xem/doi lai source truoc khi nap chinh thuc (buoc 2, xem
+        # api_manual_import_apply_time_fix). Sap certain=False (mo ho, can xem
+        # gap) len truoc de giao vu thay ngay viec can lam.
+        "timeReviews": sorted(result["timeReviews"], key=lambda r: r["certain"]),
+        "sampleRows": [
+            {
+                "excelRow": r["excelRow"], "courseCode": r["courseCode"],
+                "courseName": r["courseName"], "classCode": r["classCode"],
+                "program": r["program"], "teacherName": r["teacherName"],
+                "day": r["day"], "periodStart": r["periodStart"], "periodEnd": r["periodEnd"],
+            }
+            for r in result["rows"][:8]
+        ],
+    }
+
+
 @app.post("/api/manual/import/preview")
 def api_manual_import_preview():
     """Doc file Excel duoc tai len va tra ve BAN XEM TRUOC - CHUA ghi gi vao STATE.
@@ -1002,39 +1086,67 @@ def api_manual_import_preview():
         return jsonify({"error": err}), 400
 
     data, loi, canh_bao_gv = _build_manual_data_from_rows(result["rows"])
-    summary = fate_import.summarize(result)
-    summary["soLopDungDuoc"] = len(data["sections"])
-    # Lay so GV/hoc phan THAT sau khi gop, khong dung con dem tho cua summarize()
-    # - neu khong, so o ban xem truoc se lech voi so thuc te sau khi ghi.
-    summary["soGiangVien"] = len(data["teachers"])
-    summary["soHocPhan"] = len(data["courses"])
-    summary["soCanhBao"] = len(result["warnings"]) + len(canh_bao_gv)
 
     STATE["import_pending"] = {
         "data": data,
         "fileName": f.filename,
         "sheet": result["sheet"],
+        # Giu nguyen ban doc goc (rows/warnings/skipped/timeReviews) de
+        # apply-time-fix sua tren DUNG cac dong nay roi dung lai
+        # _build_manual_data_from_rows(), khong phai doc lai file.
+        "result": result,
     }
 
-    return jsonify({
-        "fileName": f.filename,
-        "summary": summary,
-        # Gom theo LOAI, khong cat top-20: so nhom it (2-3) nen gui het duoc, ma
-        # nguoi dung doc mot cai la biet ngay co bao nhieu kieu dong bi bo va moi
-        # kieu bao nhieu dong.
-        "skippedGroups": _gom_theo_loai(result["skipped"], _NHAN_BO_QUA),
-        "warningGroups": _gom_theo_loai(result["warnings"] + canh_bao_gv, _NHAN_LUU_Y),
-        "errors": loi[:20],
-        "sampleRows": [
-            {
-                "excelRow": r["excelRow"], "courseCode": r["courseCode"],
-                "courseName": r["courseName"], "classCode": r["classCode"],
-                "program": r["program"], "teacherName": r["teacherName"],
-                "day": r["day"], "periodStart": r["periodStart"], "periodEnd": r["periodEnd"],
-            }
-            for r in result["rows"][:8]
-        ],
-    })
+    return jsonify(_build_import_preview_response(result, data, loi, canh_bao_gv, f.filename))
+
+
+@app.post("/api/manual/import/apply-time-fix")
+def api_manual_import_apply_time_fix():
+    """'Bước 1: chuẩn hoá dữ liệu' - giao vụ xem từng lớp bị 2 nguồn giờ (cột
+    text tự do / cột Thứ-Tiết đầu-Tiết cuối) ghi khác nhau
+    (STATE['import_pending']['result']['timeReviews']) và CHỌN lại nguồn đúng,
+    TRƯỚC khi nạp chính thức (bước 2: POST .../commit). Sửa trực tiếp trên bản
+    ghi dòng (result['rows']) rồi DÙNG LẠI _build_manual_data_from_rows() - giữ
+    đúng luật sinh sections/GV/học phần như lúc đọc file lần đầu, không viết
+    lại logic riêng."""
+    pending = STATE.get("import_pending")
+    if not pending or not pending.get("result"):
+        return jsonify({"error": "Chưa có bản xem trước. Hãy tải file lên trước."}), 400
+
+    body = request.get_json(force=True)
+    try:
+        excel_row = int(body["excelRow"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "Thiếu hoặc sai excelRow."}), 400
+    source = body.get("source")
+    if source not in ("text", "structured"):
+        return jsonify({"error": "source phải là 'text' hoặc 'structured'."}), 400
+
+    result = pending["result"]
+    review = next((r for r in result["timeReviews"] if r["excelRow"] == excel_row), None)
+    if review is None:
+        return jsonify({"error": f"Không tìm thấy dòng cần sửa (excelRow={excel_row})."}), 400
+
+    review["chosen"] = source
+    chosen_time = review[source]
+    duration = chosen_time["periodEnd"] - chosen_time["periodStart"] + 1
+
+    matched = 0
+    for r in result["rows"]:
+        if r["excelRow"] == excel_row:
+            r["day"] = chosen_time["day"]
+            r["periodStart"] = chosen_time["periodStart"]
+            r["periodEnd"] = chosen_time["periodEnd"]
+            r["autoSchedule"] = False
+            r["duration"] = duration
+            matched += 1
+    if matched == 0:
+        return jsonify({"error": f"Không tìm thấy dòng dữ liệu tương ứng (excelRow={excel_row})."}), 400
+
+    data, loi, canh_bao_gv = _build_manual_data_from_rows(result["rows"])
+    pending["data"] = data
+
+    return jsonify(_build_import_preview_response(result, data, loi, canh_bao_gv, pending["fileName"]))
 
 
 @app.post("/api/manual/import/commit")

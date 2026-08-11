@@ -27,6 +27,10 @@ const LessonCard = memo(function LessonCard({
   const [rect, setRect] = useState(null);
   const [flipLeft, setFlipLeft] = useState(false);
 
+  // Ma lop hoc phan (vd "CSE3003-1") de nhan dien lop - de hon "#<id noi bo>"
+  // von khong noi len gi voi giao vu. Fallback ve #id khi lop nao do khong tra
+  // duoc ma (khong nen xay ra, nhung tranh hien "undefined").
+  const label = lesson.classCode || `#${lesson.id}`;
   const isGuest = lesson.teacherType === "GUEST";
   const color = groupColor || FALLBACK_COLOR[isGuest ? "GUEST" : "RESIDENT"];
 
@@ -119,10 +123,10 @@ const LessonCard = memo(function LessonCard({
         // duong doc du phong khi khong dung duoc chuot.
         title={
           problems.length > 0
-            ? `#${lesson.id} ${lesson.courseName} — ${problems
+            ? `${label} ${lesson.courseName} — ${problems
                 .map((p) => PROBLEM_META[p.type].label)
                 .join(", ")}`
-            : `#${lesson.id} ${lesson.courseName}`
+            : `${label} ${lesson.courseName}`
         }
         onMouseEnter={showPopover}
         onMouseLeave={hidePopover}
@@ -135,7 +139,7 @@ const LessonCard = memo(function LessonCard({
                 trong lon o giua - nhin nhu loi chu khong nhu chu y. */}
             <span className="lb-top">
               <span className="lb-code">
-                #{lesson.id}
+                {label}
                 {lesson.isPinned && <span className="lb-pin" aria-label="đã ghim">📌</span>}
                 {problems.length > 0 && <span className="lb-warn" aria-label="có vấn đề">!</span>}
               </span>
@@ -167,7 +171,7 @@ const LessonCard = memo(function LessonCard({
             <span className="tt-major" style={{ background: color.bg, color: color.text }}>
               {isGuest ? "THỈNH GIẢNG" : "CƠ HỮU"}
             </span>
-            <span className="tt-section">#{lesson.id}</span>
+            <span className="tt-section">{label}</span>
             {/* Truoc day co them badge "[da chot GD1]" o day, nhung no LUON
                 trung voi pill THINH GIANG/CO HUU ngay ben canh (moi buoi
                 thinh giang la GD1, moi buoi co huu la GD2 - khong co truong
@@ -182,7 +186,14 @@ const LessonCard = memo(function LessonCard({
             <div className="tt-problems">
               {problems.map((p) => {
                 const meta = PROBLEM_META[p.type];
-                const other = p.sectionIds?.filter((sid) => sid !== lesson.id) ?? [];
+                // Ma lop hoc phan (vd "CSE3003-1") de hien THAY CHO "#<id noi
+                // bo>" - p.sections da duoc buildProblemInbox() gan san
+                // classCode cho tung buoi, chi can tra theo sectionId.
+                const codeById = new Map(
+                  (p.sections ?? []).map((s) => [s.sectionId ?? s.id, s.classCode]),
+                );
+                const other = (p.sectionIds?.filter((sid) => sid !== lesson.id) ?? [])
+                  .map((sid) => codeById.get(sid) || `#${sid}`);
                 const dropped = p.unplacedIds?.includes(lesson.id);
                 return (
                   <div key={p.id} className={`tt-problem ${meta.cls}`}>
@@ -202,7 +213,7 @@ const LessonCard = memo(function LessonCard({
                       ) : (
                         <>
                           {other.length > 0 && (
-                            <>Đụng với <strong>#{other.join(", #")}</strong>{p.when ? ` tại ${p.when}` : ""}. </>
+                            <>Đụng với <strong>{other.join(", ")}</strong>{p.when ? ` tại ${p.when}` : ""}. </>
                           )}
                           {dropped && <strong>Buổi này bị bỏ lại, không có trên lịch cuối.</strong>}
                         </>
