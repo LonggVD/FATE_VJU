@@ -163,18 +163,38 @@ def _build_classes_list(data):
 
         out.append({
             "sectionId": sid,
+            # CHOT LICH theo HOC PHAN: moi lop cua mon deu mang theo trang thai
+            # nay de bang co the to mau/khoa nut ma khong phai tra cuu cheo.
+            "courseChot": course.get("chot") and {
+                k: v for k, v in course["chot"].items() if k != "truoc"},
             "courseId": s.get("course_id"), "courseCode": course.get("code"),
             "courseName": course.get("name") or s.get("course_name"), "credits": course.get("credits"),
             "classCode": s.get("class_code"), "ltCredits": s.get("lt_credits"), "thCredits": s.get("th_credits"),
             "cohort": s.get("cohort"), "program": s["program"],
-            "programName": data.get("program_names_reverse", {}).get(s["program"]),
-            "programLabel": sc.program_label(s["program"], data["program_faculty"], data["faculty_names"], data.get("program_names_reverse")),
+            # Hien thi NGUYEN VAN nhu file ("BCSE+MJM"); ben trong lop thuoc CA HAI
+            # chuong trinh (programIds) - xem _program_ids_cua_lop.
+            "programName": (s.get("program_raw")
+                            or data.get("program_names_reverse", {}).get(s["program"])),
+            "programLabel": sc.section_program_label(data, s),
+            "programIds": sc.section_program_ids(s),
+            "facultyName": sc.section_faculty_name(data, s),
+            "coordinators": sc.section_coordinators(data, s),
+            # O ghi GHEP ("BCSE+MJM", "VJU2023+VJU2024") = lop cua CA HAI - tach
+            # san de bo loc tinh dung. CTDT lay thang ten cua tung program_id (da
+            # tach luc tao lop), khoa thi tach tai day - xem _tach_phan().
+            "programParts": sc.section_program_names(data, s),
+            "cohortParts": _tach_phan(s.get("cohort"), _KHOA_SPLIT_RE),
             "expectedStudents": s.get("expected_students"),
             "day": day, "periodStart": p_start, "periodEnd": p_end,
             "timeAssumed": time_assumed, "timeLabel": time_label,
             # Gio dang hien la do giao vu keo-tha dat, khong phai gio goc trong
             # du lieu - de man hinh noi ro thay vi im lang doi mot con so.
             "timeFromOverride": bool(ov and ov.get("slot") is not None),
+            # DANH SACH giang vien cua lop - nguon duy nhat cho bang mirror va form
+            # sua lop. Cac truong teacher* so it ben duoi la NGUOI DAU danh sach,
+            # giu lai cho cac man chi can 1 ten (luoi TKB, tra cuu theo GV).
+            "teachers": gv_cua_lop,
+            "teacherIds": tids,
             "teacherId": s["teacher_id"], "teacherName": sc.teacher_display(data, s["teacher_id"]),
             "teacherNameRaw": teacher.get("name"),  # khong co hau to "(GV#n)" - dung cho bang mirror Excel
             "teacherType": s["teacher_type"], "teacherOrg": teacher.get("org"), "teacherTitle": teacher.get("title"),
@@ -239,14 +259,23 @@ def _build_data_response(data, extra=None):
             "duration": s["duration"],
             "courseName": s.get("course_name"),
             "program": s["program"],
-            "programLabel": sc.program_label(s["program"], data["program_faculty"], data["faculty_names"], prog_names_rev),
-            "coordinator": data["coordinator_names"][s["program"]],
+            "programLabel": sc.section_program_label(data, s),
+            "programParts": sc.section_program_names(data, s),
+            "coordinator": ", ".join(sc.section_coordinators(data, s)),
+            "coordinators": sc.section_coordinators(data, s),
             "facultyId": data["program_faculty"][s["program"]],
             "facultyName": data["faculty_names"][data["program_faculty"][s["program"]]],
             "roomType": s["room_type"],
             "windowSlots": windows,
             "windowLabels": [sc.slot_label(w, params["slotsPerDay"]) for w in windows],
             "isSingleFixedWindow": len(windows) == 1,
+            # CHUA ai khai gio ranh, he thong dang tam coi la ranh ca tuan (xem
+            # _apply_section_time). Phai gui co nay chu khong de frontend TU DOAN
+            # bang cach dem so khung: nguong cu (>=90% so o cua ca tuan) tinh
+            # weekTotal theo 7 ngay, con khung "ca tuan" cua thinh giang chi co 6
+            # ngay (khong ai day Chu nhat) -> 72/84 = 86% < 90% -> bi xep nham la
+            # "Da chot gio", tuc man hinh noi nguoc han su thuc.
+            "availabilityAssumed": bool(s.get("availability_assumed")),
         })
     submissions.sort(key=lambda x: (x["teacherId"], x["sectionId"]))
 
@@ -266,11 +295,17 @@ def _build_data_response(data, extra=None):
         pending_sections.append({
             "sectionId": sid,
             "teacherId": s["teacher_id"],
+            # TAT CA GV cua lop (dong giang day) - cac man kiem trung phai gom theo
+            # tung nguoi, khong chi GV chinh (xem problemInbox.scanTeacherClashes,
+            # unplacedAnalysis). Thieu field nay thi nguoi thu 2 tro di vo hinh.
+            "teacherIds": list(s.get("teacher_ids") or [s["teacher_id"]]),
             "teacherName": sc.teacher_display(data, s["teacher_id"]),
             "courseName": s.get("course_name"),
             "program": s["program"],
-            "programLabel": sc.program_label(s["program"], data["program_faculty"], data["faculty_names"], prog_names_rev),
-            "coordinator": data["coordinator_names"][s["program"]],
+            "programLabel": sc.section_program_label(data, s),
+            "programParts": sc.section_program_names(data, s),
+            "coordinator": ", ".join(sc.section_coordinators(data, s)),
+            "coordinators": sc.section_coordinators(data, s),
             "roomType": s["room_type"],
         })
     pending_sections.sort(key=lambda x: (x["program"], x["teacherId"]))
@@ -278,7 +313,10 @@ def _build_data_response(data, extra=None):
     faculty_stats = []
     for f_id, f_name in enumerate(data["faculty_names"]):
         progs = [p for p, fid in data["program_faculty"].items() if fid == f_id]
-        secs = [s for s in data["sections"].values() if s["program"] in progs]
+        # Lop thuoc nhieu CTDT ("BCSE+MJM") duoc tinh cho MOI chuong trinh no
+        # thuoc - dung y nghia "lop cua ca hai".
+        secs = [s for s in data["sections"].values()
+                if any(pid in progs for pid in sc.section_program_ids(s))]
         faculty_stats.append({
             "facultyId": f_id, "facultyName": f_name,
             "numPrograms": len(progs),
@@ -573,6 +611,13 @@ def _merge_duplicate_programs(data):
 
     for s in data["sections"].values():
         s["program"] = pid_remap[s["program"]]
+        if s.get("program_ids"):
+            gop = []
+            for pid in s["program_ids"]:
+                moi = pid_remap[pid]
+                if moi not in gop:
+                    gop.append(moi)
+            s["program_ids"] = gop
     for t in data["teachers"].values():
         if "home_program" in t:
             t["home_program"] = pid_remap[t["home_program"]]
@@ -816,14 +861,23 @@ def _validate_section_body(data, body, enforce_day_cap=True):
     class_code = (body.get("classCode") or "").strip()
     lt_credits = body.get("ltCredits")
     th_credits = body.get("thCredits")
-    program_id = _get_or_create_program(data, body.get("program"))
+    # Mot lop co the thuoc NHIEU chuong trinh ("BCSE+MJM"). program_ids la danh
+    # sach day du; "program" chi la nguoi dau danh sach, dung lam khoa hien thi/
+    # sap xep o cac man von chi cho 1 gia tri (giong teacher_id vs teacher_ids).
+    program_ids = _program_ids_cua_lop(data, body.get("program"))
     room_type = "LAB" if (th_credits or 0) else "LT"
 
     fields = {
-        "program": program_id, "course_id": course_id,
+        "program": program_ids[0], "program_ids": program_ids,
+        # Nguyen van o CTDT trong file - de hien thi (A3: giu nguyen nhu file).
+        "program_raw": (body.get("program") or "").strip() or "Chung",
+        "course_id": course_id,
         "course_name": f"{course['name']} ({class_code})" if class_code else course["name"],
-        "teacher_id": teacher_id, "teacher_ids": [teacher_id],
-        "teacher_type": teacher["type"], "room_type": room_type, "duration": duration,
+        # teacher_id = nguoi dau danh sach (khoa hien thi), teacher_ids = CA NHOM.
+        "teacher_id": teacher_id, "teacher_ids": teacher_ids,
+        # Loai lop tinh theo CA NHOM - xem _loai_lop().
+        "teacher_type": _loai_lop(data, teacher_ids),
+        "room_type": room_type, "duration": duration,
         "class_code": class_code, "lt_credits": lt_credits, "th_credits": th_credits,
         "cohort": (body.get("cohort") or "").strip(),
         "expected_students": body.get("expectedStudents"),
@@ -895,6 +949,29 @@ def _get_or_create_program(data, program_name):
     data["coordinator_names"][pid] = f"DPV-{program_name}"
     data["num_programs"] = len(data["program_faculty"])
     return pid
+
+
+def _program_ids_cua_lop(data, program_name):
+    """CTDT cua mot lop -> DANH SACH program_id, moi THANH PHAN mot id.
+
+    Chot voi khoa: o ghi "BCSE+MJM" la lop cua CA HAI chuong trinh, khong phai mot
+    chuong trinh thu ba ten "BCSE+MJM". Truoc day ca chuoi ghep thanh MOT
+    program_id rieng, keo theo hai cho sai:
+      - check_cross_program_conflicts coi "BCSE+MJM" khac "BCSE" nen GV day ca hai
+        khong bi tinh la day lien chuong trinh (bo sot);
+      - dieu phoi vien sinh ra ten "DPV-BCSE+MJM", trong khi thuc te la DPV cua
+        BCSE va DPV cua MJM - hai nguoi.
+
+    Ten hien thi VAN giu nguyen nhu file (section['program_raw']) - day chi la cach
+    he thong HIEU o do, khong phai cach no VIET ra."""
+    phan = _tach_phan(program_name, _PROGRAM_PART_RE) or ["Chung"]
+    ids, da_co = [], set()
+    for ten in phan:
+        pid = _get_or_create_program(data, ten)
+        if pid not in da_co:
+            da_co.add(pid)
+            ids.append(pid)
+    return ids
 
 
 def _valid_starts_from_slots(available_slots, duration, slots_per_day):

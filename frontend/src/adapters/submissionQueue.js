@@ -56,7 +56,15 @@ export function analyzeSubmissions(data) {
     const windowSlots = s.windowSlots ?? [];
     const weekTotal = weekStartCount(duration, numDays, slotsPerDay);
     // "Tu do ca tuan" = chua ai bao gio, backend chi gan tam toan bo tuan.
-    const isFreeChoice = weekTotal > 0 && windowSlots.length >= Math.floor(weekTotal * WEEK_COVER_RATIO);
+    //
+    // Uu tien co availabilityAssumed do BACKEND gui: dem so khung roi so voi
+    // nguong 90% la doan, va doan SAI - khung "ca tuan" cua thinh giang chi co 6
+    // ngay (khong ai day Chu nhat) trong khi weekTotal o day tinh 7 ngay, ra
+    // 72/84 = 86% < 90% nen bi xep thanh "Da chot gio", nguoc han su thuc. Van
+    // giu cach dem lam du phong cho ket qua/du lieu cu chua co co nay.
+    const isFreeChoice =
+      s.availabilityAssumed ??
+      (weekTotal > 0 && windowSlots.length >= Math.floor(weekTotal * WEEK_COVER_RATIO));
     const isEmpty = windowSlots.length === 0;
 
     rows.push({
@@ -79,19 +87,25 @@ export function analyzeSubmissions(data) {
 
   // Tien do theo dieu phoi vien - vi day la man hinh cua ho, va viec con lai
   // luon thuoc ve mot nguoi cu the.
+  // Lop "BCSE+MJM" thuoc CA HAI chuong trinh -> tinh vao tien do cua CA HAI dieu
+  // phoi vien (tong cac cot se lon hon so lop, dung nhu y nghia "lop cua ca hai").
   const byCoord = new Map();
   for (const r of rows) {
-    const key = r.coordinator || "(không rõ)";
-    const acc = byCoord.get(key) ?? { coordinator: key, total: 0, done: 0 };
-    acc.total += 1;
-    if (r.state === SUB_STATE.SET) acc.done += 1;
-    byCoord.set(key, acc);
+    for (const key of r.coordinators?.length ? r.coordinators : [r.coordinator || "(không rõ)"]) {
+      const acc = byCoord.get(key) ?? { coordinator: key, total: 0, done: 0 };
+      acc.total += 1;
+      if (r.state === SUB_STATE.SET) acc.done += 1;
+      byCoord.set(key, acc);
+    }
   }
   const coordinators = [...byCoord.values()]
     .map((c) => ({ ...c, missing: c.total - c.done, pct: c.total ? Math.round((c.done / c.total) * 100) : 0 }))
     .sort((a, b) => b.missing - a.missing || a.coordinator.localeCompare(b.coordinator));
 
-  const programs = [...new Set(rows.map((r) => r.programLabel).filter(Boolean))].sort((a, b) =>
+  // Muc chon la cac MA DON: lop ghi "BCSE+MJM" la lop cua CA HAI chuong trinh
+  // (backend tach san o programParts), nen no phai ra khi chon "BCSE" - chu khong
+  // thanh mot muc rieng "BCSE+MJM" trong danh sach.
+  const programs = [...new Set(rows.flatMap((r) => r.programParts ?? []))].sort((a, b) =>
     a.localeCompare(b),
   );
 
@@ -211,7 +225,7 @@ export function filterRows(rows, { search, program, state }) {
   const q = (search ?? "").trim().toLowerCase();
   return rows.filter((r) => {
     if (state && r.state !== state) return false;
-    if (program && r.programLabel !== program) return false;
+    if (program && !(r.programParts ?? []).includes(program)) return false;
     if (!q) return true;
     return (
       String(r.sectionId) === q ||

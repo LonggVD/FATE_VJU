@@ -25,6 +25,10 @@ export function lessonToTimetableItem(lesson, { phase = null } = {}) {
     teacherType: lesson.teacherType,
     roomType: lesson.roomType,
     programLabel: lesson.programLabel,
+    // CTDT thanh phan + Khoa: bo loc/gom mau doc cai nay, khong boc tu chuoi nhan.
+    programIds: lesson.programIds ?? (lesson.program != null ? [lesson.program] : []),
+    programParts: lesson.programParts ?? [],
+    facultyName: lesson.facultyName ?? null,
     usedWindowLabel: lesson.usedWindowLabel,
     phase,
   };

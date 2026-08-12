@@ -89,6 +89,51 @@ def program_label(program_id, program_faculty, faculty_names, program_names_reve
     return f"{name} ({faculty_names[program_faculty[program_id]]})"
 
 
+def section_program_ids(s):
+    """CTDT cua mot lop, LUON la danh sach. Lop cu (sinh gia lap, hoac ban ghi truoc
+    khi co program_ids) chi co "program" -> boc thanh danh sach 1 phan tu."""
+    return list(s.get("program_ids") or [s["program"]])
+
+
+def section_program_label(data, s):
+    """Nhan CTDT de HIEN THI cho mot lop.
+
+    Uu tien nguyen van trong file ("BCSE+MJM"): he thong HIEU do la hai chuong
+    trinh (section_program_ids), nhung VIET ra thi phai dung nhu file - neu khong,
+    lop BCSE+MJM se hien thanh "BCSE" va giao vu tuong minh doc nham dong."""
+    raw = s.get("program_raw")
+    if raw:
+        return raw
+    return program_label(s["program"], data["program_faculty"], data["faculty_names"],
+                         data.get("program_names_reverse"))
+
+
+def section_program_names(data, s):
+    """Ten TUNG chuong trinh thanh phan (["BCSE", "MJM"]) - danh sach de UI dung
+    lam muc chon trong bo loc va so khop bang `includes`, thay vi so nguyen chuoi
+    "BCSE+MJM" (chon "BCSE" khong ra lop do)."""
+    rev = data.get("program_names_reverse") or {}
+    ten = [rev.get(pid) for pid in section_program_ids(s)]
+    return [t for t in ten if t]
+
+
+def section_faculty_name(data, s):
+    """Ten Khoa cua lop. Truoc day UI boc tu phan trong ngoac cuoi programLabel
+    ("BCSE (Chua phan khoa)") - cach do vo ngay khi nhan chuyen sang nguyen van
+    nhu file ("BCSE+MJM", khong con ngoac). Gui thang truong nay thi khong ai
+    phai doan tu chuoi nua."""
+    fid = (data.get("program_faculty") or {}).get(s["program"])
+    ten = data.get("faculty_names") or []
+    return ten[fid] if fid is not None and fid < len(ten) else None
+
+
+def section_coordinators(data, s):
+    """Ten dieu phoi vien cua lop - MOT NGUOI CHO MOI chuong trinh thanh phan.
+    Lop "BCSE+MJM" co hai DPV (DPV-BCSE, DPV-MJM), khong phai mot "DPV-BCSE+MJM"."""
+    ten = [data["coordinator_names"].get(pid) for pid in section_program_ids(s)]
+    return [t for t in ten if t]
+
+
 def teacher_display(data, teacher_id):
     """'Ten That (GV#12)' neu co ten that, hoac 'GV 12' neu khong."""
     name = data["teachers"][teacher_id].get("name")
@@ -233,7 +278,11 @@ def check_cross_program_conflicts(data):
     for tid, secs in guest_sections_by_teacher.items():
         if len(secs) < 2:
             continue
-        programs_involved = sorted(set(s["program"] for s in secs))
+        # HOP cac chuong trinh thanh phan cua moi lop, khong phai moi "program"
+        # dai dien: lop ghi "BCSE+MJM" keo theo CA HAI dieu phoi vien, nen GV day
+        # lop do cong mot lop BCSE khac VAN la day lien chuong trinh (truoc day
+        # "BCSE+MJM" bi coi la mot chuong trinh thu ba nen truong hop nay bi bo sot).
+        programs_involved = sorted({pid for s in secs for pid in section_program_ids(s)})
         is_multi_program = len(programs_involved) > 1
         if not is_multi_program:
             continue  # chi quan tam truong hop lien chuong trinh - dung 1 CT thi khong the co "2 dieu phoi vien"
@@ -274,7 +323,12 @@ def check_cross_program_conflicts(data):
                     "sectionId": s["id"],
                     "courseName": s.get("course_name"),
                     "program": s["program"],
-                    "coordinator": data["coordinator_names"][s["program"]],
+                    "programLabel": section_program_label(data, s),
+                    "programIds": section_program_ids(s),
+                    "programParts": section_program_names(data, s),
+                    "facultyName": section_faculty_name(data, s),
+                                "coordinator": ", ".join(section_coordinators(data, s)),
+                    "coordinators": section_coordinators(data, s),
                     "windowSlots": data["submissions"][s["id"]],
                     "windowLabels": [slot_label(w, p["slotsPerDay"]) for w in data["submissions"][s["id"]]],
                 }
@@ -376,8 +430,13 @@ def solve_guest_phase(data, time_limit_s=30):
     unplaced = []
     for s in guest_sections:
         sid = s["id"]
-        prog_label = program_label(s["program"], data["program_faculty"], data["faculty_names"], data.get("program_names_reverse"))
-        coordinator = data["coordinator_names"][s["program"]]
+        prog_label = section_program_label(data, s)
+        # Danh sach chuong trinh thanh phan + ten Khoa: UI loc/gom theo cai nay,
+        # khong boc tach lai tu chuoi nhan (xem section_program_names).
+        prog_meta = {"programIds": section_program_ids(s),
+                     "programParts": section_program_names(data, s),
+                     "facultyName": section_faculty_name(data, s)}
+        coordinator = ", ".join(section_coordinators(data, s))
         submitted_windows = data["submissions"][sid]
         if solver.Value(placed[sid]) == 1:
             slot = solver.Value(starts[sid])
@@ -403,8 +462,11 @@ def solve_guest_phase(data, time_limit_s=30):
                     "sectionId": s2["id"],
                     "courseName": s2.get("course_name"),
                     "program": s2["program"],
-                    "programLabel": program_label(s2["program"], data["program_faculty"], data["faculty_names"], data.get("program_names_reverse")),
-                    "coordinator": data["coordinator_names"][s2["program"]],
+                    "programLabel": section_program_label(data, s2),
+                    "programIds": section_program_ids(s2),
+                    "programParts": section_program_names(data, s2),
+                    "facultyName": section_faculty_name(data, s2),
+                    "coordinator": ", ".join(section_coordinators(data, s2)),
                     "windows": [slot_label(w, p["slotsPerDay"]) for w in data["submissions"][s2["id"]]],
                 }
                 for s2 in guest_sections
@@ -599,11 +661,64 @@ def solve_resident_phase(data, frozen_guest_lessons, forbidden=None, time_limit_
             day, period = divmod(slot, p["slotsPerDay"])
             lessons.append({
                 "id": sid, "teacherId": s["teacher_id"], "teacherName": teacher_display(data, s["teacher_id"]),
+                "teacherIds": list(s.get("teacher_ids") or [s["teacher_id"]]),  # dong giang day - xem GD1
                 "courseName": s.get("course_name"), "program": s["program"],
-                "programLabel": program_label(s["program"], data["program_faculty"], data["faculty_names"], data.get("program_names_reverse")),
-                "roomType": s["room_type"], "day": day, "period": period,
+                "programLabel": section_program_label(data, s),
+                "programIds": section_program_ids(s),
+                "programParts": section_program_names(data, s),
+                "facultyName": section_faculty_name(data, s),
+                            "roomType": s["room_type"], "day": day, "period": period,
                 "slot": slot, "duration": s["duration"], "teacherType": "RESIDENT", "status": "DRAFT",
             })
+        else:
+            chua_xep.append(s)
+
+    # Cac lop GD2 khong xep duoc - TRUOC DAY KHONG CO danh sach nay (xem chu thich
+    # o cho tao on_day_bools: is_placed bi ep = 1 nen GD2 chi co "xep het" hoac
+    # INFEASIBLE mat trang). Gio da xep duoc bao nhieu thi xep, phan con lai phai
+    # noi ro LOP NAO va AI/CAI GI dang chiem cho - de giao vu sap lai.
+    slot_da_xep = {l["id"]: l for l in lessons}
+    frozen_by_id = {g["id"]: g for g in frozen_guest_lessons}
+    unplaced = []
+    for s in chua_xep:
+        sid = s["id"]
+        ghim = s.get("original_slot") if not s.get("time_assumed") else None
+        tids = set(s.get("teacher_ids") or [s["teacher_id"]])
+        # Cac o MA LOP NAY DUOC PHEP nam: gio da chot (1 o), hoac khung GV da khai.
+        # Khong co gi ca (chua khai, khong chot) thi khong the chi ra "ai chiem cho"
+        # - lop khong xep duoc vi het phong/qua tai, khong vi mot buoi cu the.
+        o_cho_phep = [ghim] if ghim is not None else list(data["submissions"].get(sid) or [])
+        blockers = []
+        for l in list(slot_da_xep.values()) + list(frozen_by_id.values()):
+            l_tids = set(l.get("teacherIds") or [l["teacherId"]])
+            if not (tids & l_tids):
+                continue
+            if any(_giao_nhau(o, s["duration"], l["slot"], l["duration"]) for o in o_cho_phep):
+                blockers.append({
+                    "sectionId": l["id"], "courseName": l.get("courseName"),
+                    "teacherName": l.get("teacherName"),
+                    "slotLabel": slot_label(l["slot"], p["slotsPerDay"]),
+                    "phase": "GD1" if l["id"] in frozen_by_id else "GD2",
+                })
+        unplaced.append({
+            "id": sid, "teacherId": s["teacher_id"],
+            "teacherName": teacher_display(data, s["teacher_id"]),
+            "teacherIds": list(s.get("teacher_ids") or [s["teacher_id"]]),
+            "courseName": s.get("course_name"), "program": s["program"],
+            "programLabel": section_program_label(data, s),
+            "programIds": section_program_ids(s),
+            "programParts": section_program_names(data, s),
+            "facultyName": section_faculty_name(data, s),
+            "coordinator": ", ".join(section_coordinators(data, s)),
+            "roomType": s["room_type"], "duration": s["duration"],
+            "pinnedSlot": ghim,
+            "pinnedLabel": slot_label(ghim, p["slotsPerDay"]) if ghim is not None else None,
+            # PINNED_CONFLICT: co gio da chot nhung o do bi chiem (hay gap nhat la
+            # file co hai dong nhap trung doi cung mot o cua cung mot nguoi).
+            # NO_SLOT: khong co gio chot, khong con cho nao vua.
+            "reason": "PINNED_CONFLICT" if ghim is not None else "NO_SLOT",
+            "blockers": blockers,
+        })
 
     return {
         "status": solver.StatusName(status),

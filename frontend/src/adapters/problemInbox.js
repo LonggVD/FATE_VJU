@@ -54,6 +54,15 @@ export const PROBLEM_META = {
   },
 };
 
+// Hai buoi co thuoc cac chuong trinh KHAC nhau khong? Lop "BCSE+MJM" thuoc CA HAI
+// nen no KHONG lien chuong trinh voi mot lop BCSE - so chuoi nhan ("BCSE+MJM" !==
+// "BCSE") thi ra ket qua nguoc.
+function khacChuongTrinh(a, b) {
+  const ta = a.programIds?.length ? a.programIds : [a.program];
+  const tb = b.programIds?.length ? b.programIds : [b.program];
+  return !ta.some((p) => tb.includes(p));
+}
+
 function overlaps(a, durA, b, durB) {
   return !(a + durA <= b || b + durB <= a);
 }
@@ -254,7 +263,7 @@ export function buildProblemInbox(data, guestResult, residentResult = null, pend
         : `${a.courseName === b.courseName ? a.courseName : `${a.courseName} / ${b.courseName}`} — cùng ${when}.`,
       coordinators: [...new Set([a.coordinator, b.coordinator].filter(Boolean))],
       sameCoordinator,
-      crossProgram: a.programLabel !== b.programLabel,
+      crossProgram: khacChuongTrinh(a, b),
     };
     items.push(item);
     explainedBy.set(a.sectionId, item.id);
@@ -291,6 +300,7 @@ export function buildProblemInbox(data, guestResult, residentResult = null, pend
       ...(rowById.get(l.id) ?? {
         sectionId: l.id, teacherId: l.teacherId, teacherName: l.teacherName,
         courseName: l.courseName, programLabel: l.programLabel,
+        program: l.program, programIds: l.programIds,
         coordinator: l.coordinator, duration: l.duration, windowSlots: [l.slot],
       }),
       classCode: classCodeById.get(l.id),
@@ -317,7 +327,7 @@ export function buildProblemInbox(data, guestResult, residentResult = null, pend
         : `${ra.courseName === rb.courseName ? ra.courseName : `${ra.courseName} / ${rb.courseName}`} — cùng ${when}${dangCho ? " (do buổi vừa kéo, chưa lưu)" : ""}.`,
       coordinators: [...new Set([ra.coordinator, rb.coordinator].filter(Boolean))],
       sameCoordinator: ra.coordinator === rb.coordinator,
-      crossProgram: ra.programLabel !== rb.programLabel,
+      crossProgram: khacChuongTrinh(ra, rb),
       pendingMove: dangCho,
     };
     items.push(item);

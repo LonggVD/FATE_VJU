@@ -9,7 +9,7 @@
 
 import { lessonToTimetableItem, mergeGuestAndResidentLessons } from "./lessonAdapter";
 
-export const SCOPE = { ALL: "all", PROGRAM: "program", TEACHER: "teacher" };
+export const SCOPE = { ALL: "all", PROGRAM: "program", TEACHER: "teacher", COHORT: "cohort" };
 
 export const DEFAULT_FILTER = {
   scope: SCOPE.ALL,
@@ -56,6 +56,13 @@ export function buildScheduleView({ data, guestResult, residentResult, inbox, fi
   // lop. lesson (tu guestResult/residentResult) khong tu co field nay, phai
   // noi voi data.classes (bang mirror) qua sectionId.
   const classCodeById = new Map((data?.classes ?? []).map((c) => [c.sectionId, c.classCode]));
+  // Khoa (cot "Khóa", vd VJU2026) khong nam tren lesson - noi tu bang lop qua
+  // sectionId, cung cach lam voi classCode. Khong bat solver phai mang thong tin
+  // hanh chinh nay chi de loc o giao dien.
+  // O GHEP ("BCSE+MJM", "VJU2023+VJU2024") = lop cua CA HAI - loc theo THANH
+  // PHAN, xem app._tach_phan(). Noi tu bang lop qua sectionId nhu classCode.
+  const cohortById = new Map((data?.classes ?? []).map((c) => [c.sectionId, c.cohortParts ?? []]));
+  const programPartsById = new Map((data?.classes ?? []).map((c) => [c.sectionId, c.programParts ?? []]));
 
   const withFlags = all.map((l) => {
     const ovMap = l.teacherType === "RESIDENT" ? residentOverrides : guestOverrides;
@@ -63,6 +70,8 @@ export function buildScheduleView({ data, guestResult, residentResult, inbox, fi
     return {
       ...l,
       classCode: classCodeById.get(l.id) || null,
+      cohortParts: cohortById.get(l.id) ?? [],
+      programParts: programPartsById.get(l.id) ?? [],
       problems: problemMap.get(l.id) ?? [],
       hasProblem: problemMap.has(l.id),
       override,
@@ -74,15 +83,17 @@ export function buildScheduleView({ data, guestResult, residentResult, inbox, fi
   const lessons = withFlags.filter((l) => {
     if (l.teacherType === "GUEST" && !f.guest) return false;
     if (l.teacherType === "RESIDENT" && !f.resident) return false;
-    if (f.scope === SCOPE.PROGRAM && f.scopeValue && l.programLabel !== f.scopeValue) return false;
+    if (f.scope === SCOPE.PROGRAM && f.scopeValue && !l.programParts.includes(f.scopeValue)) return false;
     if (f.scope === SCOPE.TEACHER && f.scopeValue && String(l.teacherId) !== String(f.scopeValue)) return false;
+    if (f.scope === SCOPE.COHORT && f.scopeValue && !l.cohortParts.includes(f.scopeValue)) return false;
     if (f.onlyProblems && !l.hasProblem) return false;
     if (!q) return true;
     return (
       String(l.id) === q ||
       (l.courseName ?? "").toLowerCase().includes(q) ||
       (l.teacherName ?? "").toLowerCase().includes(q) ||
-      (l.programLabel ?? "").toLowerCase().includes(q)
+      (l.programLabel ?? "").toLowerCase().includes(q) ||
+      l.cohortParts.some((k) => k.toLowerCase().includes(q))
     );
   });
 
@@ -105,7 +116,7 @@ export function buildScheduleView({ data, guestResult, residentResult, inbox, fi
   for (const row of grid) for (const v of row) if (v > maxDensity) maxDensity = v;
 
   // Danh sach de do bo loc pham vi
-  const programs = [...new Set(withFlags.map((l) => l.programLabel).filter(Boolean))].sort((a, b) =>
+  const programs = [...new Set(withFlags.flatMap((l) => l.programParts))].sort((a, b) =>
     a.localeCompare(b),
   );
   const teachers = [
@@ -113,6 +124,8 @@ export function buildScheduleView({ data, guestResult, residentResult, inbox, fi
   ]
     .map(([id, name]) => ({ id, name }))
     .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+  // Khoa moi nhat len dau (VJU2026 truoc VJU2023) - giao vu hay xem khoa moi.
+  const cohorts = [...new Set(withFlags.flatMap((l) => l.cohortParts))].sort().reverse();
 
   return {
     lessons,
@@ -125,6 +138,7 @@ export function buildScheduleView({ data, guestResult, residentResult, inbox, fi
     maxDensity,
     programs,
     teachers,
+    cohorts,
     numDays,
     slotsPerDay,
     filter: f,
@@ -135,6 +149,7 @@ export function buildScheduleView({ data, guestResult, residentResult, inbox, fi
 export function scopeLabel(view, data) {
   const f = view.filter;
   if (f.scope === SCOPE.PROGRAM && f.scopeValue) return f.scopeValue;
+  if (f.scope === SCOPE.COHORT && f.scopeValue) return `Khoá ${f.scopeValue}`;
   if (f.scope === SCOPE.TEACHER && f.scopeValue) {
     const t = view.teachers.find((x) => String(x.id) === String(f.scopeValue));
     return t?.name ?? `GV #${f.scopeValue}`;

@@ -332,6 +332,7 @@ export default function SchedulePage({ role, filter, onFilterChange }) {
           >
             <option value={SCOPE.ALL}>Toàn khoa</option>
             <option value={SCOPE.PROGRAM}>Theo chương trình</option>
+            <option value={SCOPE.COHORT}>Theo khoá</option>
             <option value={SCOPE.TEACHER}>Theo giảng viên</option>
           </NativeSelect>
         </div>
@@ -345,6 +346,18 @@ export default function SchedulePage({ role, filter, onFilterChange }) {
             searchable
             value={f.scopeValue || null}
             options={view.programs}
+            onChange={(v) => set({ scopeValue: v ?? "" })}
+          />
+        )}
+
+        {/* Khoa (cot "Khóa" cua bang du lieu hoc phan, vd VJU2026) - in TKB cho
+            mot khoa la viec thuong lam, truoc day phai loc tay tung chuong trinh. */}
+        {f.scope === SCOPE.COHORT && (
+          <FilterSelect
+            label="Tất cả khoá"
+            searchable
+            value={f.scopeValue || null}
+            options={view.cohorts}
             onChange={(v) => set({ scopeValue: v ?? "" })}
           />
         )}

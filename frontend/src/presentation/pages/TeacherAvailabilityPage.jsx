@@ -20,16 +20,8 @@ import { NativeSelect } from "@/components/ui/native-select";
 const STATUS_META = {
   missing_time: { label: "Thiếu giờ", tone: "red" },
   ready_auto: { label: "Tự động xếp", tone: "amber" },
-  ready_fixed: { label: "Đã chốt giờ", tone: "emerald" },
+  ready_fixed: { label: "Có giờ cố định", tone: "emerald" },
 };
-
-// Lay ten Khoa tu phan trong ngoac cuoi programLabel (vd "BCSE (Chưa phân khoa)"
-// -> "Chưa phân khoa") - tai dung du lieu da co san (sc.program_label da ghep
-// san), khong can them field/endpoint moi rieng cho trang nay.
-function facultyFromLabel(label) {
-  const m = /\(([^)]+)\)\s*$/.exec(label || "");
-  return m ? m[1] : null;
-}
 
 function dayNumber(day) {
   if (day == null) return "";
@@ -107,9 +99,13 @@ export default function TeacherAvailabilityPage({ role }) {
       if (!map.has(c.teacherId)) map.set(c.teacherId, { courses: new Set(), faculties: new Set(), programs: new Set(), classes: [] });
       const m = map.get(c.teacherId);
       if (c.courseName) m.courses.add(c.courseName);
-      if (c.programName) m.programs.add(c.programName);
-      const fac = facultyFromLabel(c.programLabel);
-      if (fac) m.faculties.add(fac);
+      // MA DON, khong phai nguyen van o: lop "BCSE+MJM" phai ra ca khi loc BCSE
+      // lan khi loc MJM.
+      for (const ma of c.programParts ?? []) m.programs.add(ma);
+      // Ten Khoa lay thang tu backend. Truoc day boc tu phan trong ngoac cuoi
+      // programLabel ("BCSE (Chưa phân khoa)") - vo ngay khi nhan chuyen sang
+      // nguyen van nhu file ("BCSE+MJM", khong con ngoac) va bo loc Khoa rong tron.
+      if (c.facultyName) m.faculties.add(c.facultyName);
       m.classes.push(c);
     }
     return map;
