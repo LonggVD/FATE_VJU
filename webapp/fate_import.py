@@ -71,16 +71,99 @@ _NAME_SPLIT_RE = re.compile(r"[,\n]")
 # "TS. Ta Quang Ngoc (dieu phoi)" - la NGUOI THAT kem ghi chu, quet thô se bo oan
 # ca mot lop. Phan biet bang hoc ham/hoc vi: co TS./ThS./PGS/GS thi la nguoi.
 _COORD_RE = re.compile(r"điều phối|chưa có|chưa phân|tbd|n/a", re.IGNORECASE)
-_PERSON_TITLE_RE = re.compile(r"\b(gs|pgs|ts|ths|cn|bs|kts)\b\.?", re.IGNORECASE)
-# Ghi chu "(dieu phoi)" dinh sau ten nguoi - cat bo de ban ghi GV sach.
-_TRAILING_NOTE_RE = re.compile(r"\s*\([^)]*điều phối[^)]*\)\s*$", re.IGNORECASE)
+_PERSON_TITLE_RE = re.compile(r"\b(gs|pgs|ts|ths|cn|bs|kts|ks|kỹ sư|dr|prof)\b\.?", re.IGNORECASE)
+# Manh CHI co hoc ham/hoc vi, khong co ten nguoi.
+_CHI_HOC_HAM_RE = re.compile(r"^(gs|pgs|ts|ths|cn|bs|kts|ks|dr|prof)(\.\s*(gs|pgs|ts|ths))*\.?$",
+                             re.IGNORECASE)
+# So thu tu nguoi viet vao dau o ten (HK2 dong 178-185: "1. TS. Pham Hoai Luan").
+_SO_THU_TU_RE = re.compile(r"^\d+\s*[.)]\s*")
+
+# O "GV" thuc ra ghi mot DON VI/vai tro chung, khong phai mot ca nhan: "Khoa FATE",
+# "GV Thỉnh giảng", "Chuyên gia", "Viện Toán học". Cung ban chat voi "Phòng Đào tạo
+# điều phối" (_COORD_RE) nen phai xu ly nhu nhau: coi la CHUA PHAN CONG.
+#
+# Chi khop khi tu don vi o DAU o, KHONG co hoc ham/hoc vi, va o ngan (<=4 tu) -
+# de khong bat oan nguoi that: "TS. Nguyễn Đăng Khoa" co chu "khoa" nhung co hoc vi
+# va chu do khong o dau; "Chuyên gia Nguyễn Văn A" thi dai hon 4 tu.
+_DON_VI_RE = re.compile(
+    r"^(khoa|phòng|viện|trung tâm|bộ môn|ban|gv|giảng viên|chuyên gia|nhóm|tổ)\b",
+    re.IGNORECASE)
+
+
+def khoa_gv(name):
+    """KHOA de gop hai ban ghi giang vien lam MOT nguoi. Bo hoc ham/hoc vi, so
+    thu tu, dau cau; gop khoang trang; bo hoa/thuong; dua ve NFC.
+
+    Vi sao khong lay nguyen ten lam khoa: file that ghi cung mot nguoi nhieu kieu
+    - "PGS.TS. Nguyễn Đình Thắng" / "PGS. TS. Nguyễn Đình Thắng" (khac dau cach),
+    "Tạ Kim Nhung" / "TS. Tạ Kim Nhung" (co/khong hoc ham). Moi bien the thanh mot
+    ban ghi rieng -> he thong khong con thay nguoi do TRUNG LICH VOI CHINH MINH,
+    dung cong dung chinh cua cong cu. Do tren file that: HK2 3 cap, HK1 6 cap,
+    HK1-2 2 cap.
+
+    KHONG gop theo email: file that co 4 truong hop mot email dung cho HAI nguoi
+    khac nhau (loi copy-paste khi nhap), gop theo email se nhap 2 nguoi thanh 1.
+    """
+    s = _SO_THU_TU_RE.sub("", _chuan(name))
+    s = _PERSON_TITLE_RE.sub(" ", s)
+    return " ".join(re.sub(r"[.,;:()\-–]", " ", s).split())
+
+
+def _split_names(cell):
+    """Tach o ten GV thanh danh sach NGUOI. Ngan boi dau phay/xuong dong, nhung
+    KHONG tach ben trong ngoac va bo cac manh chi co ghi chu.
+
+    File that (HK2 dong 188) ghi:
+        "TS. Bui Huy Kien
+         ThS. Nguyen Tien Dat
+         (Nhung, IoT, Robotic)"
+    Tach tho theo dau phay/xuong dong ra 5 manh, trong do ba manh "(Nhung",
+    "IoT", "Robotic)" khong phai nguoi. Truoc day vo hai vi chi nguoi DAU duoc
+    dung; nay ca nhom deu thanh GV that co rang buoc lich nen phai loc cho dung.
+    """
+    parts, buf, sau = [], [], 0
+    for ch in cell or "":
+        if ch == "(":
+            sau += 1
+        elif ch == ")":
+            sau = max(0, sau - 1)
+        if ch in ",\n" and sau == 0:
+            parts.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    parts.append("".join(buf))
+
+    out, hoc_ham_le = [], ""
+    for p in parts:
+        p = " ".join(p.split())
+        if not p or p.startswith("("):
+            continue  # manh chi la ghi chu chuyen mon, khong phai mot con nguoi
+        # So thu tu nguoi nhap them vao ("1. TS. Pham Hoai Luan") khong phai mot
+        # phan cua ten - de lai thi ban ghi nay khong gop voi cac dong ghi ten
+        # khong danh so.
+        p = _SO_THU_TU_RE.sub("", p)
+        p = _TEN_GHI_CHU_RE.sub("", p).strip()
+        if not p:
+            continue
+        # O ghi "TS, Nomura" (dau phay thay cho dau cham sau hoc vi - HK2 dong
+        # 215): tach ra thi "TS" thanh mot "nguoi" rieng con "Nomura" thanh nguoi
+        # thu hai. Manh chi co hoc ham/hoc vi thi ghep vao ten NGAY SAU.
+        if _CHI_HOC_HAM_RE.match(p):
+            hoc_ham_le = p if p.endswith(".") else p + "."
+            continue
+        out.append(f"{hoc_ham_le} {p}".strip() if hoc_ham_le else p)
+        hoc_ham_le = ""
+    return out
 
 
 def _is_placeholder(cell):
-    """True khi o ten GV thuc ra la don vi dieu phoi chu khong phai mot ca nhan."""
-    if not _COORD_RE.search(cell):
-        return False
-    return not _PERSON_TITLE_RE.search(cell)
+    """True khi o ten GV thuc ra la don vi/vai tro chung chu khong phai ca nhan."""
+    if _PERSON_TITLE_RE.search(cell):
+        return False  # co hoc ham/hoc vi -> la nguoi that (co the kem ghi chu)
+    if _COORD_RE.search(cell):
+        return True
+    return bool(_DON_VI_RE.match(cell)) and len(cell.split()) <= 4
 
 
 def _text(v):
@@ -92,9 +175,267 @@ def _text(v):
 
 def _chuan(s):
     """Chuan hoa ten de so sanh: gop moi khoang trang/xuong dong lam mot, bo hoa
-    thuong. Ten hoc phan trong file co ca xuong dong giua chung
-    ("Tieng Nhat so cap 1\\n(Du kien chia lam 4 lop...")."""
-    return " ".join(str(s or "").split()).lower()
+    thuong, dua dau tieng Viet ve dang NFC. Ten hoc phan trong file co ca xuong
+    dong giua chung ("Tieng Nhat so cap 1\\n(Du kien chia lam 4 lop...").
+
+    NFC vi cung mot chu ("Khóa") co the duoc luu o hai dang Unicode khac nhau
+    tuy cong cu tao file - so sanh nhan cot ma khong chuan hoa thi hai dang do
+    khong khop nhau."""
+    return unicodedata.normalize("NFC", " ".join(str(s or "").split()).lower())
+
+
+# --- Nhan dien COT theo NHAN o hang tieu de --------------------------------
+#
+# Ban dau module nay map cot theo VI TRI co dinh, chon bang TEN SHEET. Da vo:
+# file "FATE.TKB.HK1 2026-2027-2.xlsx" giu cau truc HK1 (co cot "TT" o dau, co
+# block "GV ky truoc de doi chieu") nhung sheet duoc doi ten thanh "FATE" ->
+# khop vao layout HK2 -> LECH DUNG 1 COT tu dau den cuoi (ma hoc phan thanh ten
+# hoc phan, GV ky truoc thanh GV ky nay, dia diem thanh ngon ngu...) va doc tu
+# dong 6 nen 2 dong tieu de bi nap thanh lop.
+#
+# Ten sheet va vi tri cot deu do giao vu sua moi ky, khong on dinh. NHAN cot thi
+# on dinh (van la "Mã lớp học phần", "Tiết đầu"...) -> doc theo nhan.
+#
+# Moi cot duoc xet bang mot DUONG DAN nhan (labels tu hang tieu de tren cung
+# xuong hang duoi cung), vi rieng nhan la KHONG du de phan biet:
+#   "Lý thuyết" duoi "Phân bổ TC"  -> so tin chi ly thuyet
+#   "Lý thuyết" duoi "Số giờ dạy"  -> so gio day ly thuyet
+#   "Họ và tên" duoi "HK1 năm 2025-2026 (để đối chiếu)" -> GV KY TRUOC
+_PREV_MARK_RE = re.compile(r"đối chiếu|năm ngoái|năm trước|kỳ trước|hk trước")
+_LB_NAME_RE = re.compile(r"^(họ và tên|họ tên|tên gv|tên giảng viên)")
+_LB_ORG_RE = re.compile(r"^(đơn vị|cơ quan) công tác")
+
+
+def _hien_tai(path):
+    """True khi duong dan nhan KHONG mang dau hieu 'du lieu ky truoc, de doi
+    chieu' - de khong lay GV/gio cua ky truoc lam cua ky nay."""
+    return not _PREV_MARK_RE.search(path)
+
+
+# (ten_truong, dieu_kien(nhan_la, duong_dan)) - xet theo thu tu, cot khop rule
+# nao truoc thi thuoc truong do. Truong khong tim thay cot nao thi de None va se
+# ra rong trong form (giao vu dien sau), dung nhu khi thieu cot truoc day.
+_COLUMN_RULES = (
+    ("courseCode", lambda leaf, path: leaf == "mã học phần"),
+    ("courseName", lambda leaf, path: leaf == "tên học phần"),
+    ("credits", lambda leaf, path: leaf == "số tín chỉ"),
+    ("classCode", lambda leaf, path: leaf == "mã lớp học phần"),
+    ("ltCredits", lambda leaf, path: leaf == "lý thuyết" and "phân bổ" in path),
+    ("thCredits", lambda leaf, path: leaf == "thực hành" and "phân bổ" in path),
+    ("cohort", lambda leaf, path: leaf == "khóa"),
+    ("program", lambda leaf, path: leaf == "ctđt"),
+    ("expectedStudents", lambda leaf, path: leaf.startswith("số sv")),
+    # KHONG con quy tac cho cot text tu do "Thời gian (Thứ, Tiết)": khoa xac nhan
+    # do la CHO GHI CU cua cac ky truoc, du lieu bo di. Khong doc, khong doi chieu,
+    # khong canh bao - dong nao thieu 3 cot Thu/Tiet dau/Tiet cuoi thi coi nhu chua
+    # co gio, de thuat toan tu xep.
+    ("thu", lambda leaf, path: leaf == "thứ"),
+    ("tietDau", lambda leaf, path: leaf == "tiết đầu"),
+    ("tietCuoi", lambda leaf, path: leaf == "tiết cuối"),
+    ("teachingHoursLt", lambda leaf, path: leaf == "lý thuyết" and "số giờ" in path),
+    ("teachingHoursTh", lambda leaf, path: leaf == "thực hành" and "số giờ" in path),
+    ("teacherTitle", lambda leaf, path: leaf.startswith("học hàm") and _hien_tai(path)),
+    ("teacherName", lambda leaf, path: _LB_NAME_RE.match(leaf) and _hien_tai(path)),
+    ("teacherOrg", lambda leaf, path: _LB_ORG_RE.match(leaf) and _hien_tai(path)),
+    ("teacherEmail", lambda leaf, path: leaf.startswith("email") and _hien_tai(path)),
+    ("teacherPhone", lambda leaf, path: leaf in ("số điện thoại", "sđt", "điện thoại") and _hien_tai(path)),
+    ("prevTeacherName", lambda leaf, path: _LB_NAME_RE.match(leaf) and not _hien_tai(path)),
+    ("prevTeacherOrg", lambda leaf, path: _LB_ORG_RE.match(leaf) and not _hien_tai(path)),
+    ("location", lambda leaf, path: leaf.startswith("địa điểm")),
+    ("teachingMode", lambda leaf, path: leaf.startswith("hình thức")),
+    ("language", lambda leaf, path: leaf.startswith("ngôn ngữ")),
+    ("otherRequirements", lambda leaf, path: leaf.startswith("yêu cầu khác") or leaf.startswith("đề xuất")),
+    ("notes", lambda leaf, path: leaf.startswith("ghi chú") or leaf.startswith("phụ trách nhập điểm")),
+    ("coordinatorOverride", lambda leaf, path: "điều phối" in leaf and ("giảng viên" in leaf or leaf.startswith("gv"))),
+)
+
+FIELDS = tuple(dict.fromkeys(f for f, _ in _COLUMN_RULES))
+
+# Cot BAT BUOC phai tim thay, kem nhan de bao loi cho nguoi dung. Thieu mot
+# trong so nay thi khong phai bang du lieu hoc phan (vd sheet "Thống kê số lớp
+# HP" cung co cot "Mã học phần") -> bao loi thay vi nap ra du lieu rac.
+_REQUIRED = (
+    ("courseName", "Tên học phần"),
+    ("classCode", "Mã lớp học phần"),
+    ("teacherName", "Họ và tên giảng viên"),
+)
+
+# Trong block thong tin GV, khi CO NHIEU cot cung khop mot truong (file HK1 co
+# hai cap "Họ và tên / Đơn vị công tác": ky truoc va ky nay) thi lay cot BEN
+# PHAI. Dau hieu chinh de loai cot ky truoc van la _PREV_MARK_RE; day chi la
+# luoi do thu hai cho truong hop file khong ghi "(để đối chiếu)" nua - theo
+# khuon file that, du lieu de doi chieu nam BEN TRAI, du lieu ky nay ben phai.
+_TEACHER_FIELDS = frozenset({
+    "teacherTitle", "teacherName", "teacherOrg", "teacherEmail", "teacherPhone",
+})
+
+# Nhan hay gap o hang tieu de - dung de nhan ra "hang nay chi gom nhan, chua
+# phai du lieu" (xem _header_bottom).
+_HEADER_LABEL_RE = re.compile(
+    r"^(tt|stt|mã |tên |số |phân bổ|lý thuyết|thực hành|tự học|khóa|ctđt|thời gian"
+    r"|thứ|tiết |họ |đơn vị|cơ quan|học hàm|email|sđt|điện thoại|địa điểm|hình thức"
+    r"|ngôn ngữ|yêu cầu|ghi chú|đề xuất|phụ trách|giảng viên|gv |trạng thái)"
+)
+
+_HEADER_SCAN_ROWS = 20  # so dong dau file de tim hang tieu de
+_HEADER_MAX_DEPTH = 3   # tieu de sau nhat da gap: 3 hang (nhom / nhom con / la)
+
+
+def _find_header_top(sh):
+    """Hang tieu de TREN CUNG = hang co o ghi dung "Mã học phần" (cot dau tien
+    cua bang o ca hai khuon file da gap). None neu khong thay."""
+    for r in range(1, min(sh.max_row, _HEADER_SCAN_ROWS) + 1):
+        for c in range(1, sh.max_column + 1):
+            if _chuan(sh.cell(row=r, column=c).value) == "mã học phần":
+                return r
+    return None
+
+
+def _is_label_row(sh, r):
+    """True khi hang chi gom NHAN: khong o nao la so, va co it nhat 3 nhan quen
+    biet. Dong du lieu luon co so (so tin chi, so SV, thu, tiet...) nen day la
+    ranh gioi du chac giua vung tieu de va vung du lieu."""
+    dem = 0
+    for c in range(1, sh.max_column + 1):
+        v = sh.cell(row=r, column=c).value
+        if v is None:
+            continue
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return False
+        if _HEADER_LABEL_RE.match(_chuan(v)):
+            dem += 1
+    return dem >= 3
+
+
+def _header_bottom(sh, top):
+    """Hang tieu de DUOI CUNG (hang nhan la). Lay xa nhat trong hai dau hieu:
+
+      - o gop DOC bat dau tu hang `top` (file that gop "Số tín chỉ" D5:D7...);
+      - hang chi gom nhan nam ngay duoi (file do CHINH webapp xuat ra khong gop
+        o nao ca - xem fate_export.py - nhung van co hang nhan la o duoi).
+
+    Can ca hai vi moi dau hieu rieng le deu thieu voi mot trong hai loai file.
+    """
+    bottom = top
+    for mr in sh.merged_cells.ranges:
+        if mr.min_row == top:
+            bottom = max(bottom, mr.max_row)
+    for r in range(top + 1, min(top + _HEADER_MAX_DEPTH, sh.max_row) + 1):
+        if _is_label_row(sh, r):
+            bottom = max(bottom, r)
+    return min(bottom, top + _HEADER_MAX_DEPTH)
+
+
+def _label_grid(sh, top, bottom):
+    """Luoi nhan da chuan hoa cua vung tieu de [top..bottom] x [moi cot]."""
+    ncol = sh.max_column
+    grid = [[_chuan(sh.cell(row=r, column=c).value) for c in range(1, ncol + 1)]
+            for r in range(top, bottom + 1)]
+
+    # Bung o gop: openpyxl chi tra gia tri o o goc tren-trai, phan con lai None.
+    for mr in sh.merged_cells.ranges:
+        if mr.max_row < top or mr.min_row > bottom:
+            continue
+        val = _chuan(sh.cell(row=mr.min_row, column=mr.min_col).value)
+        if not val:
+            continue
+        for r in range(max(mr.min_row, top), min(mr.max_row, bottom) + 1):
+            for c in range(mr.min_col, min(mr.max_col, ncol) + 1):
+                grid[r - top][c - 1] = val
+
+    # Nhan NHOM co the chi ghi o o dau nhom, cac o sau de trong ma KHONG gop o
+    # (file webapp xuat ra la vay) -> keo nhan sang phai.
+    # Chi lam voi cac hang NHOM, KHONG lam voi hang nhan la duoi cung: o trong o
+    # hang do nghia la "cot nay khong co nhan rieng", keo sang se de nhan cua
+    # cot khac len (nhan "Thực hành" tran sang cot "Khóa").
+    for i in range(len(grid) - 1):
+        for c in range(1, ncol):
+            if grid[i][c] or not grid[i][c - 1]:
+                continue
+            # Chi keo trong pham vi mot nhom cha: hang tren cung khong co cha nen
+            # keo tu do, hang duoi chi keo khi o ben trai CUNG cha voi o nay.
+            if i == 0 or grid[i - 1][c] == grid[i - 1][c - 1]:
+                grid[i][c] = grid[i][c - 1]
+    return grid
+
+
+def read_layout(sh):
+    """Doc ban do COT -> truong cua form tu chinh hang tieu de cua sheet.
+
+    Tra ve dict {ten_truong: chi_so_cot_0based | None} kem "firstDataRow" va
+    "headerRows"; None neu sheet khong co hang tieu de nhan ra duoc.
+
+    Khoa dat trung ten field trong body JSON cua POST /api/manual/section, de
+    app.py chi viec chuyen tiep.
+    """
+    top = _find_header_top(sh)
+    if top is None:
+        return None
+    bottom = _header_bottom(sh, top)
+    grid = _label_grid(sh, top, bottom)
+
+    layout = dict.fromkeys(FIELDS)
+    layout["firstDataRow"] = bottom + 1
+    layout["headerRows"] = (top, bottom)
+    for c in range(len(grid[0])):
+        labels = [grid[r][c] for r in range(len(grid))]
+        leaf = next((l for l in reversed(labels) if l), "")
+        if not leaf:
+            continue
+        # Duong dan nhan tu tren xuong, bo cac nhan lap lai lien tiep do bung o
+        # gop doc ("Số tín chỉ | Số tín chỉ | Số tín chỉ").
+        path_parts = []
+        for l in labels:
+            if l and (not path_parts or path_parts[-1] != l):
+                path_parts.append(l)
+        path = " | ".join(path_parts)
+        for field, khop in _COLUMN_RULES:
+            if not khop(leaf, path):
+                continue
+            if layout[field] is None or field in _TEACHER_FIELDS:
+                layout[field] = c
+            break
+    return layout
+
+
+def _missing_required(layout):
+    """Nhan cua cac cot bat buoc ma khong tim thay trong hang tieu de."""
+    thieu = [nhan for field, nhan in _REQUIRED if layout.get(field) is None]
+    # Nguon gio DUY NHAT: 3 cot cau truc. Thieu chung thi ca file khong lop nao co
+    # gio - bao loi ngay o buoc xem truoc con hon nap ra 300 lop deu "chua co gio".
+    if any(layout.get(k) is None for k in ("thu", "tietDau", "tietCuoi")):
+        thieu.append("Thời gian (Thứ / Tiết đầu / Tiết cuối)")
+    return thieu
+
+
+def detect_sheet(wb):
+    """Chon sheet du lieu va doc ban do cot cua no -> (ten_sheet, layout, loi).
+
+    Uu tien sheet co chu "FATE" trong ten: file that con co sheet cua khoa khac
+    ("Giảng dạy cho BJS") va cac sheet phu ("Thống kê số lớp HP", "HP ở MĐ cần
+    thực hành...") - nhung sheet do CUNG co cot "Mã học phần"/"Tên học phần" nen
+    khong loc theo ten thi rat de doc dung sheet sai.
+    """
+    uu_tien = [n for n in wb.sheetnames if "fate" in _chuan(n)]
+    da_thu = []
+    for name in uu_tien or wb.sheetnames:
+        layout = read_layout(wb[name])
+        if layout is None:
+            da_thu.append((name, "không thấy hàng tiêu đề nào có ô “Mã học phần”"))
+            continue
+        thieu = _missing_required(layout)
+        if not thieu:
+            return name, layout, None
+        da_thu.append((name, "thiếu cột " + ", ".join(f"“{t}”" for t in thieu)))
+
+    chi_tiet = "; ".join(f"sheet “{n}”: {ly_do}" for n, ly_do in da_thu)
+    return None, None, (
+        "Không tìm thấy bảng dữ liệu học phần trong file. "
+        + (chi_tiet or "File không có sheet nào.")
+        + ". Cần một sheet có hàng tiêu đề với các cột “Mã học phần”, "
+        "“Tên học phần”, “Mã lớp học phần”, “Họ và tên giảng viên” và "
+        "“Thứ / Tiết đầu / Tiết cuối”."
+    )
 
 
 def _num(v):
@@ -166,62 +507,16 @@ def _structured_sessions(row, layout, col):
     return out
 
 
-def _course_group_ids(raw_rows, col):
-    """Danh so nhom hoc phan cho tung dong RAW, dung DUNG luat 'doi ten hoc
-    phan -> nhom moi' ma read_rows() dung de ke thua carry (xem chi thich o do)
-    - tach rieng ra day de dung truoc CA HAI vong (phat hien trung lap va vong
-    chinh), khong phai vi day la logic doc lap."""
-    ids, gid, last_name = [], -1, None
-    for row in raw_rows:
-        ten_rieng = _text(col(row, "courseName"))
-        if ten_rieng and _chuan(ten_rieng) != _chuan(last_name or ""):
-            gid += 1
-            last_name = ten_rieng
-        elif gid == -1:
-            gid = 0
-        ids.append(gid)
-    return ids
-
-
-def _group_time_overrides(raw_rows, layout, col, group_ids):
-    """Bat loi 'copy dong lam lop 2 nhung quen sua 1 trong 2 cot gio' - kieu loi
-    da gap that trong file HK1 2026-2027 (lop CSE3003-1/CSE3003-2: cot text
-    "Thời gian" giu y NGUYEN chu cu, "Thứ/Tiết đầu/Tiết cuối" moi la cot da sua
-    dung cho lop 2; nguoc lai voi "Giải tích 1" VJU2002-1/2 - cot cau truc moi
-    la ban giu nguyen, text la cot da sua dung). Hai truong hop doi cho nhau
-    nen KHONG the chon co dinh 1 nguon - dau hieu dang tin la SU TRUNG LAP:
-    trong cung 1 hoc phan (nhieu lop), nguon nao GIU Y NGUYEN mot gia tri cho
-    MOI lop trong khi nguon kia phan biet ro tung lop, thi nguon giu-y-nguyen
-    do la ban chua-sua-het, nguon con lai moi dung.
-
-    Tra ve dict {group_id: "text"|"structured"} - CHI ghi cho nhom PHAT HIEN
-    RO trung lap 1 chieu (>=2 lop co CA HAI nguon, dung 1 nguon giong nhau tuyet
-    doi giua moi lop con nguon kia khac nhau); nhom con lai (mo ho, hoac ca hai
-    nguon deu giong/deu khac nhau) KHONG co trong dict - giu dung hanh vi mac
-    dinh cu (uu tien text) nhu tu truoc, vi khong co tin hieu nao de tin chon
-    khac di."""
-    by_group = {}
-    for i, row in enumerate(raw_rows):
-        ts = _text_sessions(row, layout, col)
-        st = _structured_sessions(row, layout, col)
-        if not ts or not st:
-            continue  # can CA HAI nguon co gia tri moi so sanh duoc
-        by_group.setdefault(group_ids[i], []).append((tuple(sorted(ts)), tuple(sorted(st))))
-
-    overrides = {}
-    for gid, pairs in by_group.items():
-        if len(pairs) < 2:
-            continue
-        texts = {p[0] for p in pairs}
-        structs = {p[1] for p in pairs}
-        if len(texts) == 1 and len(structs) > 1:
-            overrides[gid] = "structured"
-        elif len(structs) == 1 and len(texts) > 1:
-            overrides[gid] = "text"  # da la mac dinh, ghi lai chi de ro rang
-    return overrides
-
-
 _DAY_LABELS_VN = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"]
+
+# Tiet lon nhat con TIN DUOC. He thong khong con chot cung 12 tiet/ngay: app.py noi
+# slotsPerDay theo tiet lon nhat gap trong file (file HK1 2026-2027-2 dung tiet 13),
+# nen "ngoai pham vi" chi con nghia la gia tri VO LY - gan nhu chac chan go sai.
+#
+# 16 vi mot ngay hoc toi da la sang (1-5) + chieu (6-10) + toi (11-15); ghi tiet 20
+# hay 99 thi khong the la gio hoc that, ma noi slotsPerDay theo do se phong to mo
+# hinh solver vo ich (moi tiet x 7 ngay).
+MAX_TIET = 16
 
 
 def _session_label(session):
@@ -231,13 +526,32 @@ def _session_label(session):
     return f"{_DAY_LABELS_VN[day]}, tiết {p_start}-{p_end}"
 
 
-def detect_layout(workbook):
-    """Nhan dien dang file theo ten sheet. Tra ve (ten_sheet, layout) hoac
-    (None, None) neu khong khop dang nao da biet."""
-    for name, layout in LAYOUTS.items():
-        if name in workbook.sheetnames:
-            return name, layout
-    return None, None
+def _sessions_label(sessions):
+    """Nhan cho CA DANH SACH buoi - mot o gio co the ghi nhieu buoi/tuan, va man
+    "Xac nhan gio hoc" phai noi ro moi ben ghi may buoi (truoc day chi hien duoc
+    truong hop 1 buoi nen dong nhieu buoi khong bao gio hien ra).
+
+    Buoi vuot pham vi tiet duoc ghi ro NGAY TREN NHAN: giao vu bam chon nguon o
+    man do, phai thay truoc hau qua chu khong bam roi moi biet lop mat gio."""
+    if not sessions:
+        return "không có giờ"
+    nhan = " + ".join(_session_label(s) for s in sessions)
+    if any(s[2] > MAX_TIET for s in sessions):
+        nhan += f" (tiết > {MAX_TIET}, nghi gõ sai — sẽ phải để hệ thống tự xếp)"
+    return nhan
+
+
+def _hop_le(sessions):
+    """Bo cac buoi khong dung duoc (thu ngoai 0-6, tiet <1, tiet cuoi < tiet dau).
+
+    Loc NGAY khi doc tung nguon, truoc khi so sanh/chon nguon: co dong ghi rac o
+    mot nguon, neu chi loc SAU khi chon thi lop mat sach gio du nguon con lai co
+    gio dung.
+
+    CO Y khong loc buoi vuot MAX_TIET o day: gia tri do van phai hien o man "Xac
+    nhan gio hoc" de giao vu doi chieu voi file (file HK1-2 dong 280/281 ghi tiet
+    11-13). Cho nao chiu no la app._parse_class_time - coi nhu chua co gio."""
+    return [s for s in sessions if 0 <= s[0] <= 6 and s[1] >= 1 and s[2] >= s[1]]
 
 
 def read_rows(source):
@@ -265,17 +579,14 @@ def read_rows(source):
     except Exception as e:  # file hong / khong phai xlsx
         return None, f"Không đọc được file Excel: {e}"
 
-    sheet_name, layout = detect_layout(wb)
-    if layout is None:
+    sheet_name, layout, err = detect_sheet(wb)
+    if err:
         wb.close()
-        return None, (
-            "Không nhận diện được định dạng file. Cần có sheet tên "
-            + " hoặc ".join(f"'{n}'" for n in LAYOUTS)
-            + f". Sheet đang có trong file: {', '.join(wb.sheetnames)}."
-        )
+        return None, err
 
     sh = wb[sheet_name]
-    raw_rows = list(sh.iter_rows(min_row=layout["header_row"], values_only=True))
+    first_data_row = layout["firstDataRow"]
+    raw_rows = list(sh.iter_rows(min_row=first_data_row, values_only=True))
     wb.close()
 
     def col(row, key):
@@ -348,8 +659,6 @@ def read_rows(source):
         elif _is_placeholder(teacher_cell):
             chua_phan_cong = True
             warnings.append({"row": excel_row, "kind": "chua_phan_cong", "detail": teacher_cell[:60]})
-        else:
-            teacher_cell = _TRAILING_NOTE_RE.sub("", teacher_cell)
 
         if not carry["courseName"]:
             # Khong co ten hoc phan o bat ky dong nao phia tren -> lay ma lop lam
@@ -360,7 +669,7 @@ def read_rows(source):
                 "detail": f"đặt tạm là “{carry['courseName']}”",
             })
 
-        names = [] if chua_phan_cong else [n.strip() for n in _NAME_SPLIT_RE.split(teacher_cell) if n.strip()]
+        names = [] if chua_phan_cong else _split_names(teacher_cell)
         if not names:
             # Giu nguyen chu trong file ("Phong Dao tao dieu phoi"...) neu co, con
             # o trong thi ghi ro la chua phan cong.
@@ -431,6 +740,18 @@ def read_rows(source):
             warnings.append({
                 "row": excel_row, "kind": "nhieu_buoi",
                 "detail": f"{len(sessions)} buổi → {len(sessions)} lớp cùng mã “{carry['classCode'] or '?'}”",
+            })
+
+        # Tiet VO LY (> MAX_TIET). Bao tu day (buoc xem truoc) chu khong de
+        # app._parse_class_time bao "Thu/Tiet khong hop le" - o luong nap file, loi
+        # do lam RUNG CA LOP (mat GV/SV/hoc phan), xem chu thich o _parse_class_time.
+        ngoai = [s for s in sessions if s[2] is not None and s[2] > MAX_TIET]
+        if ngoai:
+            warnings.append({
+                "row": excel_row, "kind": "gio_ngoai_pham_vi_tiet",
+                "detail": (f"{_sessions_label(ngoai)} — tiết lớn hơn {MAX_TIET} thì "
+                           f"không thể là giờ học thật, lớp này chuyển sang "
+                           f"“để hệ thống tự xếp”"),
             })
 
         base = {

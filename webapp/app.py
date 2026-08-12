@@ -3,14 +3,20 @@
 Chay: py app.py   -> mo http://127.0.0.1:5055
 """
 
+import contextlib
+import datetime
 import json
 import os
+import pathlib
 import re
+from collections import Counter
 
-from flask import Flask, request, jsonify, render_template, send_file
+from flask import Flask, request, jsonify, render_template, send_file, send_from_directory
 
+import fate_audit
 import fate_export
 import fate_import
+import fate_lecturers
 import scheduler_core as sc
 
 app = Flask(__name__)
@@ -249,6 +255,9 @@ def _build_data_response(data, extra=None):
         "isRealData": bool(extra and extra.get("isRealData")),
         "sourceLabel": (extra or {}).get("sourceLabel"),
         "numTimeAssumed": (extra or {}).get("numTimeAssumed", 0),
+        # So lop dang xep bang gia dinh "GV chua khai gio ranh nen coi nhu ranh ca
+        # tuan" - de man hinh noi ro day KHONG phai gio GV da xac nhan.
+        "numAvailabilityAssumed": data.get("num_availability_assumed", 0),
         # Ten file Excel da nap (neu du lieu den tu /api/manual/import/commit).
         # sourceLabel van phai la "Nhap lieu thu cong" de form cho sua, nen nguon
         # goc phai di rieng o day - khong thi giao vu khong con biet dang lam
@@ -547,11 +556,19 @@ def _parse_class_time(body, slots_per_day, teacher_type=None, enforce_cap=True):
     hoac de trong ca 3 truong; error la str neu du lieu nhap sai dinh dang/khoang.
     teacher_type (neu co): chan Thu vuot qua quy dinh (thinh giang toi Thu 7,
     co huu toi Thu 6) - giao vu go tay khong lach duoc rang buoc ma solver dang
-    tuan theo (xem sc.MAX_DAY_INDEX). enforce_cap=False (danh cho luong NAP FILE
-    hang loat - xem _build_manual_data_from_rows): file that co dong vi pham
-    (vd lop thuc tap co huu xep Chu nhat) - KHONG duoc lam RUNG ca lop (mat het
-    thong tin GV/SV/hoc phan), tra ve (None, None) NHU CHUA CO GIO de giao vu tu
-    gan lai, thay vi loi cung lam _build_manual_data_from_rows() bo hang lop do."""
+    tuan theo (xem sc.MAX_DAY_INDEX).
+
+    enforce_cap=False (danh cho luong NAP FILE hang loat - xem
+    _build_manual_data_from_rows): GIU NGUYEN gio trong file, ke ca Thu 7/Chu nhat
+    voi GV co huu. Vi mot dong trong file la mot lop DA CHOT GIO - GV va dieu phoi
+    vien da thong nhat voi nhau roi, he thong khong co quyen doi. Quy dinh ngay chi
+    ap cho lop CHUA co gio, luc do he thong moi la nguoi chon.
+
+    Truoc day cho nay tra (None, None) = bo gio, chuyen "de he thong tu xep": lam
+    15 lop cua HK1 2026-2027-2 (thuc tap/thuc hanh/do an xep Thu 7-Chu nhat) mat
+    gio thuc.
+
+    Tiet ngoai pham vi thi van bo gio (khong bo lop) - xem trong than ham."""
     if body.get("autoSchedule"):
         return None, None
     day, p_start, p_end = body.get("day"), body.get("periodStart"), body.get("periodEnd")
@@ -577,9 +594,20 @@ def _apply_section_time(data, sid, teacher, duration, time_info):
     theo time_info (None = de he thong tu xep) - dung chung cho tao moi va sua.
     time_info khac None: gio da CHOT, submissions rut ve DUNG 1 slot do (giong 1
     dong Excel co gio parse duoc), bo qua het co che 'khung gio ranh cua GV'.
-    time_info None: giu nguyen hanh vi /api/manual/section cu - RESIDENT tu do
-    hoan toan (Giai doan 2), GUEST tra theo khung gio ranh da khai (/api/manual/
-    teacher), neu chua khai gi thi vao pending_section_ids nhu truoc."""
+    time_info None: xep theo khung gio ranh DA KHAI (/api/manual/teacher) - CA
+    thinh giang VA co huu, giao cac khung cua ca nhom (_gio_ranh_chung). Chua ai
+    khai gi thi tu do ca tuan (danh dau availability_assumed):
+      - GUEST: submissions = toan bo khung hop le (mien cua Giai doan 1 CHINH LA
+        submissions nen phai dien du).
+      - RESIDENT: submissions = [] (Giai doan 2 tu dung mien tu do) - hai cach ghi
+        khac nhau cho cung mot y, vi hai pha lay mien theo hai duong khac nhau.
+
+    Vi sao "chua khai = ranh ca tuan" chu khong phai "khong xep duoc": nap file HK2
+    cho 88/119 lop thinh giang khong co gio va GV chua khai gio ranh -> giai ra chi
+    xep duoc 24/119, tuc gan nhu vo dung cho den khi co nguoi khai tay 88 lan. Coi
+    nhu ranh ca tuan thi thuat toan xep duoc ngay, giao vu thu hep lai sau neu can
+    - va van dem duoc bao nhieu lop dang o trang thai "doan" (num_availability_
+    assumed) de khong ai hieu nham day la gio GV da xac nhan."""
     s = data["sections"][sid]
     if sid in data["pending_section_ids"]:
         data["pending_section_ids"].remove(sid)
@@ -676,11 +704,12 @@ def _empty_manual_data():
     """Bo du lieu rong de bat dau 'nhap lieu thu cong' - dung cau truc voi
     generate_data()/load_real_fate_data() de solve_guest_phase/solve_resident_phase/
     check_cross_program_conflicts/_build_data_response dung duoc khong can sua gi.
-    numDays=7/slotsPerDay=12 khop quy uoc cua load_real_fate_data (Thu2..CN, toi da
-    12 tiet/ngay)."""
+    numDays=7 khop quy uoc cua load_real_fate_data (Thu2..CN). slotsPerDay=13 la
+    MAC DINH cho nhap tay; luong nap file con noi them theo tiet lon nhat co trong
+    file - xem _noi_slots_per_day()."""
     return {
         "params": {
-            "numDays": 7, "slotsPerDay": 12, "duration": 2,
+            "numDays": 7, "slotsPerDay": 13, "duration": 2,
             "ltPool": 60, "labPool": 40, "seed": 0,
             "pctPreSubmitted": 100, "numForcedConflicts": 0,
         },
@@ -814,6 +843,15 @@ def _build_manual_data_from_rows(rows):
     data = _empty_manual_data()
     loi = []
     canh_bao = []
+
+    # PHAI noi truoc khi dung section: _parse_class_time kiem tra tiet <= slotsPerDay
+    # va _apply_section_time tinh slot = day * slotsPerDay + (tiet - 1).
+    spd = _noi_slots_per_day(data, rows)
+    if spd > _empty_manual_data()["params"]["slotsPerDay"]:
+        canh_bao.append({
+            "row": None, "kind": "noi_so_tiet",
+            "detail": f"File có giờ tới tiết {spd} → đặt {spd} tiết/ngày cho cả thời khoá biểu",
+        })
 
     # --- Giang vien: gop theo TEN (da chuan hoa), KHONG theo (ten, don vi) ---
     #
@@ -963,6 +1001,10 @@ def _build_manual_data_from_rows(rows):
     data["num_resident"] = sum(1 for t in data["teachers"].values() if t["type"] == "RESIDENT")
     data["num_guest"] = len(data["teachers"]) - data["num_resident"]
     data["num_time_assumed"] = sum(1 for s in data["sections"].values() if s.get("time_assumed"))
+    # Lop dang xep theo "GV chua khai gio ranh nen coi nhu ranh ca tuan" - dem rieng
+    # de man hinh noi ro day la GIA DINH, khong phai gio GV da xac nhan.
+    data["num_availability_assumed"] = sum(
+        1 for s in data["sections"].values() if s.get("availability_assumed"))
     return data, loi, canh_bao
 
 
@@ -1161,20 +1203,52 @@ def api_manual_import_commit():
     if not pending:
         return jsonify({"error": "Chưa có bản xem trước. Hãy tải file lên trước."}), 400
 
-    STATE["data"] = pending["data"]
-    STATE["extra"] = {
-        "isRealData": False,
-        "sourceLabel": "Nhập liệu thủ công",
-        "numTimeAssumed": pending["data"].get("num_time_assumed", 0),
-        "importedFrom": f"{pending['fileName']} (sheet '{pending['sheet']}')",
-    }
+    body = request.get_json(silent=True) or {}
+    mode = body.get("mode", "replace")
+    if mode not in ("replace", "merge"):
+        return jsonify({"error": "mode phải là 'replace' hoặc 'merge'."}), 400
+
+    nguon = f"{pending['fileName']} (sheet '{pending['sheet']}')"
+    if mode == "merge" and STATE["data"] is not None:
+        if STATE["extra"] and STATE["extra"].get("isRealData"):
+            return jsonify({"error": "Chỉ gộp thêm được vào dữ liệu nhập tay, "
+                                     "không gộp vào bộ 'Dữ liệu thật'."}), 400
+        gop = _gop_manual_data(STATE["data"], pending["data"])
+        cu = (STATE["extra"] or {}).get("importedFrom")
+        STATE["extra"] = {
+            "isRealData": False,
+            "sourceLabel": "Nhập liệu thủ công",
+            "numTimeAssumed": STATE["data"].get("num_time_assumed", 0),
+            "importedFrom": f"{cu} + {nguon}" if cu else nguon,
+        }
+    else:
+        gop = None
+        STATE["data"] = pending["data"]
+        STATE["extra"] = {
+            "isRealData": False,
+            "sourceLabel": "Nhập liệu thủ công",
+            "numTimeAssumed": pending["data"].get("num_time_assumed", 0),
+            "importedFrom": nguon,
+        }
+
+    # Ket qua giai cu khong con dung voi bo du lieu moi (ke ca khi gop them: co
+    # lop moi chen vao, phong/gio phai tinh lai).
     STATE["guestResult"] = None
     STATE["residentResult"] = None
-    STATE["overrides"] = {}
     STATE["import_pending"] = None
+    # ...nhung LICH BAN DAU tu cac gio da chot trong file thi hien duoc ngay, va
+    # ghim san de hai buoc giai khong lam xe dich (xem _dat_lich_ban_dau).
+    _dat_lich_ban_dau(STATE["data"], nguon)
 
     _save_snapshot()
-    return jsonify(_build_data_response(STATE["data"], STATE["extra"]))
+    resp = _build_data_response(STATE["data"], STATE["extra"])
+    # Tra kem LICH BAN DAU de man "Thoi khoa bieu" hien duoc ngay sau khi nap,
+    # khong phai tai lai trang.
+    resp["guestResult"] = STATE["guestResult"]
+    resp["residentResult"] = STATE["residentResult"]
+    if gop is not None:
+        resp["mergeReport"] = gop
+    return jsonify(resp)
 
 
 def _parse_availability_slots(data, body):

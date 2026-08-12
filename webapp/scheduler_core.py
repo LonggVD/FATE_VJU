@@ -543,22 +543,21 @@ def _parse_time_text(text):
     return sessions, any_unparsed
 
 
-# 2 dang cau truc cot da gap trong thuc te - xem GIAI-THICH-PHUONG-AN.md / bao
-# cao doi chieu de biet chi tiet vi sao khac nhau. Them dang moi vao day neu gap.
-_LAYOUT_OLD = {  # "Giảng dạy cho FATE" - vd FATE.TKB.HK1 2026-2027.xlsx
-    "sheet_name": "Giảng dạy cho FATE", "header_row": 8,
-    "course": 2, "class_code": 4, "lt_hours": 5, "th_hours": 6,
-    "program": 8, "time_text": 10, "thu": 11, "tiet_dau": 12, "tiet_cuoi": 13,
-    "title": 16, "name": 17, "org": 18,
-}
-_LAYOUT_NEW = {  # "FATE" - vd FATE.TKB.HK2_2025-2026.xlsx (cau truc CHUAN, dung tiep cac ky sau)
-    "sheet_name": "FATE", "header_row": 6,
-    "course": 1, "class_code": 3, "lt_hours": 4, "th_hours": 5,
-    "program": 8, "time_text": None, "thu": 11, "tiet_dau": 12, "tiet_cuoi": 13,
-    "title": None, "name": 14, "org": 15,  # title da nam san trong "name", khong co cot rieng
-}
-
 _NAME_SPLIT_RE = re.compile(r"[,\n]")  # GV dong giang day ngan boi dau phay HOAC xuong dong (ca 2 kieu deu gap)
+
+# Ten cot ma ham nay dung -> ten truong trong ban do cot cua fate_import.
+# Truoc day o day co _LAYOUT_OLD/_LAYOUT_NEW: hai bo chi so cot CO DINH, chon theo
+# TEN SHEET. Da vo voi file "FATE.TKB.HK1 2026-2027-2.xlsx" (cau truc HK1 nhung
+# sheet doi ten thanh "FATE" -> lech dung 1 cot tu dau den cuoi ma khong bao loi);
+# duong nhap file da chuyen sang doc theo NHAN o hang tieu de, cho nay dung lai
+# chinh bo doc do de khong con hai cach nhan dien layout trong cung mot repo.
+_COT_TU_FATE_IMPORT = {
+    "course": "courseName", "class_code": "classCode",
+    "lt_hours": "ltCredits", "th_hours": "thCredits",
+    "program": "program",
+    "thu": "thu", "tiet_dau": "tietDau", "tiet_cuoi": "tietCuoi",
+    "title": "teacherTitle", "name": "teacherName", "org": "teacherOrg",
+}
 
 
 def load_real_fate_data(xlsx_path, sheet_name=None, default_duration=2):
@@ -566,9 +565,9 @@ def load_real_fate_data(xlsx_path, sheet_name=None, default_duration=2):
     gia lap. Tra ve dung cau truc 'data' de solve_guest_phase/solve_resident_phase/
     check_cross_program_conflicts dung duoc khong can sua gi them.
 
-    Tu nhan dien 1 trong 2 dang cau truc cot da biet (_LAYOUT_OLD/_LAYOUT_NEW) dua
-    vao ten sheet co trong file - neu truyen san sheet_name thi dung dung layout
-    tuong ung ten do.
+    Ban do cot doc tu chinh HANG TIEU DE cua file (fate_import.read_layout) - xem
+    _COT_TU_FATE_IMPORT. sheet_name (neu truyen) chi de chi dinh sheet, khong con
+    quyet dinh layout.
 
     Phan loai GV co huu/thinh giang theo "Don vi cong tac": co chua "Viet Nhat"
     -> RESIDENT, nguoc lai -> GUEST. Cac dong do "Phong Dao tao dieu phoi"/"JLE
@@ -583,31 +582,33 @@ def load_real_fate_data(xlsx_path, sheet_name=None, default_duration=2):
     """
     import openpyxl
 
+    # Import trong ham (khong o dau file): fate_import da `import scheduler_core`
+    # nen import nguoc o cap module se thanh vong tron.
+    import fate_import
+
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     if sheet_name is None:
-        if _LAYOUT_NEW["sheet_name"] in wb.sheetnames:
-            layout = _LAYOUT_NEW
-        elif _LAYOUT_OLD["sheet_name"] in wb.sheetnames:
-            layout = _LAYOUT_OLD
-        else:
-            raise ValueError(
-                f"Khong nhan dien duoc layout - khong thay sheet '{_LAYOUT_NEW['sheet_name']}' "
-                f"hoac '{_LAYOUT_OLD['sheet_name']}' trong file. Sheet co san: {wb.sheetnames}")
+        sheet_name, layout, err = fate_import.detect_sheet(wb)
+        if err:
+            raise ValueError(err)
     else:
-        layout = _LAYOUT_NEW if sheet_name == _LAYOUT_NEW["sheet_name"] else _LAYOUT_OLD
-    sh = wb[layout["sheet_name"]]
-    rows = list(sh.iter_rows(min_row=layout["header_row"], values_only=True))
+        layout = fate_import.read_layout(wb[sheet_name])
+        if layout is None:
+            raise ValueError(f"Khong doc duoc hang tieu de trong sheet '{sheet_name}'.")
+    first_data_row = layout["firstDataRow"]
+    sh = wb[sheet_name]
+    rows = list(sh.iter_rows(min_row=first_data_row, values_only=True))
 
     max_period = 12
     parsed_rows = []
     last_course, last_class_code, last_lt, last_th = None, None, None, None
 
     def col(row, key):
-        idx = layout[key]
+        idx = layout.get(_COT_TU_FATE_IMPORT[key])
         return row[idx] if idx is not None and idx < len(row) else None
 
     for i, row in enumerate(rows):
-        excel_row = i + layout["header_row"]
+        excel_row = i + first_data_row
         course = col(row, "course") or last_course
         class_code = col(row, "class_code") or last_class_code
         lt_hours = col(row, "lt_hours") if col(row, "lt_hours") is not None else last_lt

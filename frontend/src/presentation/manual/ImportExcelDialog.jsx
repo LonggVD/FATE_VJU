@@ -210,11 +210,17 @@ export default function ImportExcelDialog({ open, onOpenChange }) {
           )}
         </div>
 
-        <DialogFooter className="border-t px-6 py-3">
+        <DialogFooter className="flex-wrap gap-2 border-t px-6 py-3">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Hủy
           </Button>
-          <Button variant="destructive" disabled={!preview || loading} onClick={handleCommit}>
+          {/* GOP THEM: de nap file khoa nay roi nap tiep file khoa khac, hoac nap
+              lai file da sua ma khong mat cong da chinh. Lop trung (cung ma lop +
+              hoc phan + GV + gio) bi bo qua, so luong bao lai sau khi nap. */}
+          <Button variant="outline" disabled={!preview || loading} onClick={() => handleCommit("merge")}>
+            {loading ? "Đang nạp…" : "Gộp thêm vào dữ liệu hiện có"}
+          </Button>
+          <Button variant="destructive" disabled={!preview || loading} onClick={() => handleCommit("replace")}>
             {loading ? "Đang nạp…" : `Xóa dữ liệu cũ và nạp ${s?.soLopDungDuoc ?? ""} lớp`}
           </Button>
         </DialogFooter>
@@ -325,10 +331,20 @@ function ChiTiet({ tone, tieuDe, moTa, nhom }) {
       <summary className="cursor-pointer px-3 py-2 text-sm font-medium">{tieuDe}</summary>
       <div className="space-y-2.5 px-3 pb-3 text-xs">
         <p className="text-muted-foreground">{moTa}</p>
+        {taiVe && (
+          <a
+            href={taiVe}
+            className="inline-flex items-center gap-1 rounded-md border px-2 py-1 font-medium hover:bg-muted/60"
+          >
+            Tải danh sách này ra Excel để gửi khoa sửa
+          </a>
+        )}
         {(nhom || []).map((g) => (
           <div key={g.loai} className="bg-background/60 rounded-md border p-2.5">
             <p className="font-medium">
-              <span className="tabular-nums">{g.so}</span> dòng — {g.nhan}
+              {/* Co nhom dem TRUONG HOP chu khong dem dong (vd "5 ma lop bi dung
+                  cho nhieu hoc phan") - xem fate_audit._nhom. */}
+              <span className="tabular-nums">{g.so}</span> {g.donVi || "dòng"} — {g.nhan}
             </p>
 
             {g.chiTiet?.length > 0 && (
