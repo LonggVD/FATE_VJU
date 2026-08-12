@@ -11,6 +11,7 @@ import contextlib
 import datetime
 
 import scheduler_core as sc
+from domain.hoc_chung import nhom_cua, thanh_vien
 from domain.time_rules import apply_section_time, overlaps
 from state import STATE
 
@@ -35,7 +36,12 @@ def detect_move_conflict(data, section_id, slot):
     # Trung GV xet theo CA NHOM dong giang (giao cua hai tap teacher_ids), khong
     # chi GV chinh: solver rang buoc ca nhom nen neu chi so GV chinh o day thi
     # keo-tha se bao "khong sao" cho dung cai cho ma thuat toan coi la trung.
+    #
+    # HOC CHUNG duoc tru ra: cac lop cung nhom la MOT buoi, chung PHAI o cung o
+    # gio - do la muc dich, khong phai xung dot. Ke ca o phong: mot buoi mot phong.
     my_tids = set(s.get("teacher_ids") or [s["teacher_id"]])
+    cung_buoi = set(thanh_vien(data, section_id))
+    placed = [l for l in placed if l["id"] not in cung_buoi]
     teacher_blockers = [
         l for l in placed
         if my_tids.intersection(l.get("teacherIds") or [l["teacherId"]])
@@ -85,6 +91,10 @@ def buoi_tren_luoi(data, s, slot):
         "slot": slot, "duration": s["duration"],
         "teacherType": s["teacher_type"], "status": "DRAFT",
         "usedWindowLabel": sc.slot_label(slot, slots_per_day),
+        # HOC CHUNG: cac buoi cung nhom nam DE LEN NHAU tren luoi (dung y - mot
+        # buoi that). Frontend gop chung thanh mot the theo hai truong nay.
+        "hocChungId": (nhom_cua(data, s["id"]) or {}).get("id"),
+        "hocChungWith": [x for x in thanh_vien(data, s["id"]) if x != s["id"]],
     }
 
 

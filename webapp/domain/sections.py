@@ -36,6 +36,8 @@ def empty_manual_data():
         "num_programs": 0,
         "program_names_reverse": {},
         "manual_teacher_windows": {},  # teacher_id -> [slot, ...] (slot=day*slotsPerDay+period)
+        # Nhieu lop (nhieu ma mon) la MOT buoi day - xem domain/hoc_chung.py
+        "hoc_chung": [],
         "num_time_assumed": 0,
     }
 

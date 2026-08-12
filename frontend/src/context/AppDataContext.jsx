@@ -331,6 +331,30 @@ export function AppDataProvider({ children }) {
     },
   ), [runAction, apDungPhanHoi]);
 
+  // HOC CHUNG: danh dau / bo danh dau nhieu lop la MOT buoi day.
+  const doHocChung = useCallback((sectionIds, payload) => runAction(
+    () => scheduler.markHocChung(sectionIds, payload),
+    {
+      onSuccess: apDungPhanHoi,
+      messageFn: (res) => {
+        const n = res.hocChungGroup?.sectionIds?.length ?? sectionIds.length;
+        return `Đã đánh dấu ${n} lớp học chung một buổi — hệ thống sẽ luôn xếp chúng cùng giờ, `
+          + `cùng một phòng, và không báo trùng giảng viên nữa.`;
+      },
+      errorPrefix: "Không đánh dấu được học chung",
+    },
+  ), [runAction, apDungPhanHoi]);
+
+  const doBoHocChung = useCallback((groupId) => runAction(
+    () => scheduler.unmarkHocChung(groupId),
+    {
+      onSuccess: apDungPhanHoi,
+      messageFn: () => "Đã bỏ nhóm học chung — các lớp trở lại độc lập, "
+        + "từ lần Giải sau hệ thống lại coi chúng là trùng giờ.",
+      errorPrefix: "Không bỏ được nhóm học chung",
+    },
+  ), [runAction, apDungPhanHoi]);
+
   const doClearManualTimes = useCallback((sectionIds) => runAction(
     () => scheduler.clearManualTimes(sectionIds),
     {
@@ -362,6 +386,7 @@ export function AppDataProvider({ children }) {
     addManualTeacher, updateManualTeacher,
     addManualCourse, updateManualCourse,
     addManualSection, updateManualSection, deleteManualSection, doClearManualTimes,
+    doHocChung, doBoHocChung,
   };
 
   return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>;

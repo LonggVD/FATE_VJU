@@ -11,6 +11,7 @@ from flask import Blueprint, request
 from api.common import can_du_lieu, loi, tra_du_lieu
 from domain.availability import parse_availability_slots
 from domain.chot import khoa_vi_da_chot
+from domain.hoc_chung import don_nhom_hong
 from domain.pinning import dong_bo_ket_qua, ghim_theo_gio_form
 from domain.sections import empty_manual_data, id_moi, validate_section_body
 from domain.teachers import dem_lai_so_gv, sync_teacher_sections
@@ -313,6 +314,9 @@ def api_manual_delete_section(data, section_id):
         data["pending_section_ids"].remove(section_id)
     STATE["overrides"].pop(section_id, None)
     STATE["bo_ghim"].discard(section_id)
+    # Nhom hoc chung con MOT lop thi khong con la "hoc chung" - de lai thi giao
+    # dien hien badge "Học chung" tren mot buoi don doc.
+    don_nhom_hong(data)
 
     dong_bo_ket_qua(data, [section_id])
     save_snapshot()

@@ -34,7 +34,7 @@ import { cn } from "@/lib/utils";
 export default function SchedulePage({ role, filter, onFilterChange }) {
   const {
     data, guestResult, residentResult, loading, error, solveGuest, solveResident,
-    doMoveLesson, doClearOverride, doSaveSchedule,
+    doMoveLesson, doClearOverride, doSaveSchedule, doHocChung,
   } = useAppData();
   const [activeProblem, setActiveProblem] = useState(null);
   // Buoi can cuon toi tren luoi - { id, seq }; xem pickProblem.
@@ -304,6 +304,9 @@ export default function SchedulePage({ role, filter, onFilterChange }) {
       // thang, 409 (hiem, vd 2 giao vu bam gan nhau) se hien qua thong bao loi
       // ngay trong tab.
       onPlace={(sectionId, slot) => doMoveLesson(sectionId, slot)}
+      // "Danh dau hoc chung": cach sua thu hai cho vu trung giang vien - xem
+      // ProblemInbox va webapp/domain/hoc_chung.py.
+      onHocChung={canEdit ? (sectionIds) => doHocChung(sectionIds) : undefined}
     />
   );
 

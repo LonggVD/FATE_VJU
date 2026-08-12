@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Calendar, Check, CircleCheck, Filter, X } from "lucide-react";
+import { Calendar, Check, CircleCheck, Filter, X, Users } from "lucide-react";
 import { PROBLEM_META, PROBLEM_TYPE } from "../../adapters/problemInbox";
 import { REASON_META, UNPLACED_REASON } from "../../adapters/unplacedAnalysis";
 import { TONE_CLASS, TONE_DOT } from "@/components/shared/pill";
@@ -73,11 +73,12 @@ function TabButton({ active, onClick, count, tone, children }) {
  * @param onPlace(sectionId, slot) - xep (ghim) 1 buoi CHUA xep duoc vao 1 khung
  *   gio con trong (tab "Chua xep duoc"). Khong truyen thi tab do an nut xep.
  */
-export default function ProblemInbox({ inbox, activeId, onPick, onClear, onPlace }) {
+export default function ProblemInbox({ inbox, activeId, onPick, onClear, onPlace, onHocChung }) {
   const [tab, setTab] = useState(TAB.VAN_DE);
   const [openUnplacedId, setOpenUnplacedId] = useState(null);
   const [placing, setPlacing] = useState(null); // {sectionId, slot} dang xu ly
   const [placeError, setPlaceError] = useState(null);
+  const [dangGopHC, setDangGopHC] = useState(null); // id vu dang danh dau hoc chung
 
   // CHI tinh lop THAT SU khong xep duoc (co bao gio nhung bi trung/het phong) -
   // loai NOT_SUBMITTED (chua nop gio, khong co gi de xet ca) ra khoi day, vi
@@ -289,6 +290,39 @@ export default function ProblemInbox({ inbox, activeId, onPick, onClear, onPlace
                           <div className="bg-muted/60 text-muted-foreground rounded p-1.5">
                             {g.meta.fix}
                           </div>
+
+                          {/* HOC CHUNG: cach sua THU HAI cho vu "trung giang
+                              vien" - khong phai doi gio, ma noi ro hai lop nay
+                              VON LA MOT buoi (nhieu ma mon, sinh vien ngoi
+                              chung). Dat ngay canh "Doi gio mot trong hai buoi"
+                              vi day la dung cho giao vu doi dien voi vu do, va
+                              cap lop da san o day - khong phai di tim lai. */}
+                          {it.type === PROBLEM_TYPE.CLASH &&
+                            it.sectionIds?.length >= 2 &&
+                            onHocChung && (
+                            <button
+                              type="button"
+                              disabled={dangGopHC === it.id}
+                              onClick={async () => {
+                                setDangGopHC(it.id);
+                                try {
+                                  await onHocChung(it.sectionIds);
+                                } finally {
+                                  setDangGopHC(null);
+                                }
+                              }}
+                              className="hover:bg-muted flex w-full items-center gap-1.5 rounded border px-2 py-1.5 text-left text-[12px] disabled:opacity-50"
+                              title={
+                                "Hai lớp này là MỘT buổi dạy (nhiều mã môn, sinh viên học chung). "
+                                + "Hệ thống sẽ luôn xếp chúng cùng giờ, tính một phòng, và không báo trùng nữa."
+                              }
+                            >
+                              <Users className="size-3.5 shrink-0" />
+                              {dangGopHC === it.id
+                                ? "Đang đánh dấu…"
+                                : `Đánh dấu ${it.sectionIds.length} lớp này HỌC CHUNG một buổi`}
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>

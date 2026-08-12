@@ -10,6 +10,7 @@ from api.chot import bp as bp_chot
 from api.data import bp as bp_data
 from api.export import bp as bp_export
 from api.frontend import bp as bp_frontend
+from api.hoc_chung import bp as bp_hoc_chung
 from api.import_excel import bp as bp_import
 from api.lecturers import bp as bp_lecturers
 from api.manual import bp as bp_manual
@@ -25,6 +26,7 @@ _TAT_CA = (
     bp_solve,      # /api/{submit-availability,solve-guest,solve-resident,results}
     bp_schedule,   # /api/{move-lesson,clear-override}, /api/manual/save-schedule
     bp_chot,       # /api/manual/course/<id>/chot
+    bp_hoc_chung,  # /api/manual/hoc-chung
     bp_export,     # /api/manual/export
 )
 

@@ -21,9 +21,17 @@ export function lessonToTimetableItem(lesson, { phase = null } = {}) {
     duration: lesson.duration,
     courseName: lesson.courseName,
     teacherId: lesson.teacherId,
+    // CA NHOM giang vien (dong giang day) - bo loc theo GV va cac phep quet trung
+    // phai xet het, khong chi GV chinh. Ham nay liet ke TUONG MINH tung truong nen
+    // thieu o day la mat luon o moi noi dung grid item.
+    teacherIds: lesson.teacherIds ?? (lesson.teacherId != null ? [lesson.teacherId] : []),
     teacherName: lesson.teacherName,
     teacherType: lesson.teacherType,
     roomType: lesson.roomType,
+    // HOC CHUNG: nhieu ma mon la MOT buoi day. scheduleView gop cac buoi cung
+    // nhom thanh mot the theo hai truong nay (xem webapp/domain/hoc_chung.py).
+    hocChungId: lesson.hocChungId ?? null,
+    hocChungWith: lesson.hocChungWith ?? [],
     programLabel: lesson.programLabel,
     // CTDT thanh phan + Khoa: bo loc/gom mau doc cai nay, khong boc tu chuoi nhan.
     programIds: lesson.programIds ?? (lesson.program != null ? [lesson.program] : []),

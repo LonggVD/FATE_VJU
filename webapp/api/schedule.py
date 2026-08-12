@@ -5,6 +5,7 @@ from flask import Blueprint, jsonify, request
 
 from api.common import can_du_lieu, loi, tra_du_lieu
 from domain.chot import khoa_vi_da_chot
+from domain.hoc_chung import thanh_vien
 from domain.pinning import (attach_ca_hai, attach_override_metadata,
                             detect_move_conflict, dong_bo_ket_qua)
 from domain.time_rules import apply_section_time, overlaps
@@ -61,14 +62,22 @@ def api_move_lesson(data):
         return loi("Ô này đang trùng giờ giảng viên hoặc hết phòng — cần ghi lý do để xác nhận.",
                    409, conflict=conflict)
 
-    STATE["overrides"][section_id] = {"slot": slot, "reason": reason, "problem": conflict}
-    # Ghim tay de len tren moi thu -> khong con la lop "de he thong xep lai".
-    STATE["bo_ghim"].discard(section_id)
+    # HOC CHUNG: keo mot thanh vien la keo CA NHOM - chung la mot buoi, de lai
+    # mot lop o o cu la nhom vo va lan Giai sau bao trung gio tro lai.
+    cung_buoi = thanh_vien(data, section_id) or [section_id]
+    for sid_khac in cung_buoi:
+        STATE["overrides"][sid_khac] = {"slot": slot, "reason": reason, "problem": conflict}
+        # Ghim tay de len tren moi thu -> khong con la lop "de he thong xep lai".
+        STATE["bo_ghim"].discard(sid_khac)
 
     kind = s["teacher_type"]
     result = STATE["guestResult"] if kind == "GUEST" else STATE["residentResult"]
     if result is not None:
         by_id = {l["id"]: l for l in result["lessons"]}
+        for sid_khac in cung_buoi:
+            if sid_khac in by_id and sid_khac != section_id:
+                l = by_id[sid_khac]
+                l["day"], l["period"], l["slot"] = day, period, slot
         if section_id in by_id:
             l = by_id[section_id]
             l["day"], l["period"], l["slot"] = day, period, slot
@@ -175,6 +184,10 @@ def api_save_schedule(data):
         for i in range(len(group)):
             for j in range(i + 1, len(group)):
                 a, b = group[i], group[j]
+                # HOC CHUNG: hai lop cung nhom la MOT buoi, cung gio la DUNG Y -
+                # khong phai trung gio.
+                if sc.cung_nhom_hoc_chung(data, a["id"], b["id"]):
+                    continue
                 slot_a = a["day"] * slots_per_day + (a["period_start"] - 1)
                 slot_b = b["day"] * slots_per_day + (b["period_start"] - 1)
                 if overlaps(slot_a, a["duration"], slot_b, b["duration"]):

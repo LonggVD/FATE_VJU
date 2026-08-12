@@ -635,6 +635,75 @@ select:focus-visible {
   letter-spacing: 0.3px;
 }
 
+/* ---- HOC CHUNG: mot buoi day, nhieu ma mon --------------------------------
+   Mau TIM, tach khoi mau cam cua "DONG GIANG" o tren: hai khai niem hay bi lan
+   nhau ma he qua khac han. DONG GIANG = mot lop, nhieu NGUOI DAY. HOC CHUNG =
+   mot buoi, nhieu MA MON (nhieu lop hoc phan cua nhieu chuong trinh). Mot the co
+   the mang ca hai nhan cung luc, nen phai nhin ra ngay cai nao la cai nao. */
+.lesson-hc-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 800;
+  background: #e9d5ff;
+  color: #6b21a8;
+  letter-spacing: 0.3px;
+}
+/* Dau hieu tren THANH THE, thay duoc o CA che do gon (che do do khong render
+   `lb-body` nen khong co cho cho badge chu): mot vach cheo tim o goc tren-phai. */
+/* `position: relative` PHAI dat o day: .lesson-bar khong tu co, nen dau goc se
+   neo vao o luoi (cell host) thay vi vao chinh the - lech han cho voi the keo
+   dai nhieu tiet. */
+.lesson-bar.hoc-chung { position: relative; }
+.lesson-bar.hoc-chung::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  border-top: 9px solid #7e22ce;
+  border-left: 9px solid transparent;
+  pointer-events: none;
+}
+
+/* Nhan gon tren THE (khong gian rat hep - chi mot dau "×N"). */
+.lb-hc {
+  background: #7e22ce;
+  color: #fff;
+  border-radius: 4px;
+  padding: 0 3px;
+  font-size: 9px;
+  font-weight: 800;
+  flex: none;
+}
+/* Khoi liet ke cac lop cung buoi trong popup. */
+.tt-hc {
+  border: 1px solid color-mix(in srgb, #7e22ce 25%, transparent);
+  background: color-mix(in srgb, #7e22ce 6%, transparent);
+  border-radius: 6px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.tt-hc-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+}
+.tt-hc-code { font-weight: 700; flex: none; }
+.tt-hc-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tt-hc-sv { flex: none; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.tt-hc-tong {
+  margin-top: 2px;
+  padding-top: 3px;
+  border-top: 1px solid color-mix(in srgb, #7e22ce 20%, transparent);
+  font-size: 11px;
+  color: #6b21a8;
+}
+
 /* Day host: transparent overlay spanning all period rows for one day */
 
 .schedv2-day-host {

@@ -10,6 +10,7 @@ from flask import Blueprint, jsonify, request, send_file
 
 from api.common import loi
 from domain.excel_rows import build_import_preview_response, build_manual_data_from_rows
+from domain.hoc_chung import luu_de_tai_lap, tai_lap_theo_ma_lop
 from domain.merge import gop_manual_data
 from domain.pinning import dat_lich_ban_dau
 from domain.response import build_data_response
@@ -85,8 +86,18 @@ def api_manual_import_commit():
     if mode not in ("replace", "merge"):
         return loi("mode phải là 'replace' hoặc 'merge'.")
 
+    # HOC CHUNG duoc neo theo MA LOP truoc khi THAY du lieu: section id sinh lai tu
+    # 0 moi lan nap nen nhom khoa theo id se mat sach. Giao vu doi file kha thuong
+    # xuyen (mot ky da toi ban -5) nen khong the bat ho danh dau lai moi lan.
+    #
+    # Chi can neo o che do "replace". "merge" gop THEM vao bo dang co nen section
+    # id cu giu nguyen, nhom con nguyen ven - neo lai o do se tao nhom trung va bao
+    # cao ra nhung con so vo nghia.
+    thay_du_lieu = not (mode == "merge" and STATE["data"] is not None)
+    nhom_cu = luu_de_tai_lap(STATE["data"]) if (thay_du_lieu and STATE["data"]) else []
+
     nguon = f"{pending['fileName']} (sheet '{pending['sheet']}')"
-    if mode == "merge" and STATE["data"] is not None:
+    if not thay_du_lieu:
         gop = gop_manual_data(STATE["data"], pending["data"])
         cu = (STATE["extra"] or {}).get("importedFrom")
         STATE["extra"] = {
@@ -110,12 +121,22 @@ def api_manual_import_commit():
     STATE["guestResult"] = None
     STATE["residentResult"] = None
     STATE["import_pending"] = None
+    # Ghep lai cac nhom HOC CHUNG theo ma lop. Phai lam TRUOC dat_lich_ban_dau:
+    # tao nhom co the dong bo gio cac thanh vien ve gio dai dien, ma lich ban dau
+    # doc chinh gio do.
+    so_nhom, bo_qua_nhom = tai_lap_theo_ma_lop(STATE["data"], nhom_cu)
+
     # ...nhung LICH BAN DAU tu cac gio da chot trong file thi hien duoc ngay, va
     # ghim san de hai buoc giai khong lam xe dich (xem pinning.dat_lich_ban_dau).
     dat_lich_ban_dau(STATE["data"], nguon)
 
     save_snapshot()
     resp = build_data_response(STATE["data"], STATE["extra"])
+    if nhom_cu:
+        # Noi ro da ghep lai duoc bao nhieu nhom va mat nhung nhom nao - khong thi
+        # giao vu tuong nhom cu con nguyen trong khi mot vai da roi.
+        resp["hocChungReport"] = {"taiLap": so_nhom, "boQua": bo_qua_nhom,
+                                  "truoc": len(nhom_cu)}
     # Tra kem LICH BAN DAU de man "Thoi khoa bieu" hien duoc ngay sau khi nap,
     # khong phai tai lai trang.
     resp["guestResult"] = STATE["guestResult"]
