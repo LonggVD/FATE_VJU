@@ -171,9 +171,14 @@ export default function ManualEntryPage({ role }) {
     // AppLayout duoc goi voi bleed=true cho trang nay (xem BLEED_PAGES trong
     // App.jsx) nen vung noi dung khong con padding - thanh cong cu va bang tu lo
     // le trai/phai cua rieng chung.
-    <div className="bg-background">
+    //
+    // CHIEM TRON chieu cao con lai (AppLayout duoc goi voi fullHeight=true cho
+    // trang nay): canh bao va thanh cong cu la flex item co dinh, BANG lay het
+    // phan con lai va tu cuon - co the bang moi "dong bang" duoc hang tieu de va
+    // 5 cot dau (xem .xls-scroll trong styles.css).
+    <div className="bg-background flex min-h-0 flex-1 flex-col">
       {(!canEdit || (canEdit && !isManualMode)) && (
-        <div className="px-4 pt-3 md:px-6">
+        <div className="shrink-0 px-4 pt-3 md:px-6">
           {!canEdit && (
             <Notice tone="slate" icon={Eye}>
               Vai trò "Xem thôi" — không thể sửa.
@@ -187,13 +192,15 @@ export default function ManualEntryPage({ role }) {
         </div>
       )}
 
-      <div>
-        {/* Dinh lai ngay duoi page header khi cuon - bang co toi 62 lop, cuon
-            xuong ma mat o tim/bo loc/nut thi phai cuon nguoc len moi lam tiep
-            duoc. Offset lay tu bien --page-header-h do AppLayout DO duoc, khong
-            hard-code (chieu cao header doi theo breakpoint va theo co crumbs
-            hay khong). z-10 de nam DUOI page header (z-20), khong de len no. */}
-        <div className="bg-background sticky top-(--page-header-h) z-10 border-b">
+      <div className="flex min-h-0 flex-1 flex-col">
+        {/* Thanh cong cu LUON hien: bang co toi vai tram lop, cuon xuong ma mat
+            o tim/bo loc/nut thi phai cuon nguoc len moi lam tiep duoc.
+
+            Truoc day dat `sticky top-(--page-header-h)` vi ca trang cuon chung.
+            Nay trang la mot cot flex chiem tron chieu cao, cuon doc do CHINH
+            bang lo (xem fullHeight trong AppLayout) - thanh nay chi can la flex
+            item khong co lai (`shrink-0`) la da dung yen, khong can sticky nua. */}
+        <div className="bg-background shrink-0 border-b">
         <div className="flex flex-wrap items-center gap-2 px-4 py-3 md:px-6">
           <h2 className="mr-1 text-sm font-semibold">
             Lớp đã nhập ({visible.length}
@@ -354,7 +361,7 @@ export default function ManualEntryPage({ role }) {
         />
 
         {visible.length > shown.length && (
-          <div className="flex justify-center border-t p-3">
+          <div className="flex shrink-0 justify-center border-t p-3">
             <Button variant="outline" size="sm" onClick={() => setLimit((l) => l + PAGE_STEP)}>
               Hiện thêm {Math.min(PAGE_STEP, visible.length - shown.length)} lớp (còn{" "}
               {visible.length - shown.length})

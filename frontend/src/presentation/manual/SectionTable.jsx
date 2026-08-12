@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from "react";
 import { Lock, LockOpen } from "lucide-react";
 import { Pill } from "@/components/shared/pill";
 
@@ -71,15 +72,64 @@ function groupByCourse(rows) {
 }
 
 
+// So cot DONG BANG ben trai: TT · Ma hoc phan · Ten hoc phan · So tin chi ·
+// Chot lich - dung 5 o dau cua dong tieu de thu nhat (chung deu rowSpan={3}).
+const SO_COT_DONG_BANG = 5;
+
+
 export default function SectionTable({
   rows, canEdit, loading, tenLop,
   onOpenSection, onOpenCourse, onOpenTeacher, onChot, onBoChot, onBoHocChung,
 }) {
   const courseGroups = groupByCourse(rows);
+  const tableRef = useRef(null);
+
+  // DO be rong that cua 5 cot dong bang, ghi thanh --fz-1..--fz-4 cho CSS dat
+  // `left` (xem khoi "DONG BANG" trong styles.css).
+  //
+  // Khong tinh san trong CSS duoc: cac cot do khai `width` chu khong phai be
+  // rong CHOT - table-layout mac dinh van noi cot ra khi noi dung doi (ma lop
+  // dai, tieu de xuong dong), va zoom le lam moi so le di vai phan muoi px. Chi
+  // can lech mot chut la hai cot dinh chong len nhau hoac ho ra khe trang.
+  //
+  // Cong don tu getBoundingClientRect().width chu khong doc offsetLeft: o dang
+  // dinh da bi day khoi vi tri that cua no, doc toa do se ra so cua trang thai
+  // dang cuon roi tu khoa chinh no o do.
+  useLayoutEffect(() => {
+    const table = tableRef.current;
+    if (!table) return;
+    const ths = [...table.querySelectorAll(":scope > thead > tr:first-child > th")]
+      .slice(0, SO_COT_DONG_BANG);
+    if (ths.length === 0) return;
+
+    const do_lai = () => {
+      let x = 0;
+      ths.forEach((th, i) => {
+        x += th.getBoundingClientRect().width;
+        // --fz-1 la moc trai cua cot THU HAI (= be rong cot dau), nen ghi sau
+        // khi da cong. Cot dau luon left:0, khong can bien.
+        table.style.setProperty(`--fz-${i + 1}`, `${x}px`);
+      });
+    };
+
+    do_lai();
+    const ro = new ResizeObserver(do_lai);
+    ths.forEach((th) => ro.observe(th));
+    return () => ro.disconnect();
+  }, []);
+
+  // Bong cua vung dong bang chi hien khi DA cuon qua no - bong hien san luc chua
+  // cuon doc ra thanh mot vet toi vo co giua bang. Ghi thang vao DOM chu khong
+  // qua useState: moi nac cuon ma ve lai ca bang vai tram dong thi giat.
+  const onScroll = (e) => {
+    const el = e.currentTarget;
+    el.dataset.sx = el.scrollLeft > 0 ? "1" : "0";
+    el.dataset.sy = el.scrollTop > 0 ? "1" : "0";
+  };
 
   return (
-  <div className="xls-scroll">
-    <table className="data-table xls-table">
+  <div className="xls-scroll" onScroll={onScroll}>
+    <table className="data-table xls-table" ref={tableRef}>
       {/* Ba vung form phan biet bang NEN (`xls-z-course` / `xls-z-teacher`),
           khong bang vach ke. Vung con lai (Lop hoc phan) de tran - no chiem
           da so cot, to nen ca thi bang thanh nang.

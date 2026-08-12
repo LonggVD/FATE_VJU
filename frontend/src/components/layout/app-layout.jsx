@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AppSidebar } from '@/components/layout/app-sidebar';
 import { AppTopbar } from '@/components/layout/app-topbar';
 import { useIsDesktop } from '@/hooks/use-is-desktop';
+import { cn } from '@/lib/utils';
 
 const SIDEBAR_KEY = 'tkb_sidebar_collapsed';
 
@@ -41,6 +42,17 @@ export function AppLayout({
   // co bang rong hon man hinh (bang mirror 29 cot): moi px be ngang deu dang gia,
   // ngoi trong the co padding chi lam no phai cuon ngang som hon can thiet.
   bleed = false,
+  // Trang CHIEM TRON chieu cao con lai va TU LO cuon doc, thay vi de <main> cuon
+  // ca trang. Can cho man co bang "dong bang" hang tieu de / cot dau (freeze
+  // panes): `position: sticky` luon bam vao KHUNG CUON GAN NHAT, ma khung cuon
+  // ngang cua bang (overflow-x) da la mot khung cuon roi - neu cuon doc van do
+  // <main> lo thi thead sticky se bam nham vao khung cuon cua bang (khung do
+  // khong bao gio cuon doc) va khong dinh duoc gi ca.
+  //
+  // Doi lai, trang phai tu chia: khoi nao dung yen, khoi nao cuon. Xem
+  // ManualEntryPage - thanh cong cu thanh flex item co dinh, bang lay
+  // `min-h-0 flex-1`.
+  fullHeight = false,
 }) {
   const [collapsed, setCollapsedState] = useState(loadCollapsed);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -132,7 +144,12 @@ export function AppLayout({
         />
         <div className="flex min-w-0 flex-1 flex-col">
           <main
-            className="flex-1 overflow-y-auto"
+            className={cn(
+              'flex-1',
+              fullHeight
+                ? 'flex min-h-0 flex-col overflow-hidden'
+                : 'overflow-y-auto',
+            )}
             style={{ '--page-header-h': `${headerH}px` }}
           >
             {title && (
@@ -155,10 +172,19 @@ export function AppLayout({
                 )}
               </div>
             )}
-            <div className={bleed ? undefined : "p-4 pt-3 md:p-6 md:pt-4"}>
+            <div
+              className={cn(
+                !bleed && 'p-4 pt-3 md:p-6 md:pt-4',
+                fullHeight && 'flex min-h-0 flex-1 flex-col',
+              )}
+            >
               {children}
             </div>
-            {footer}
+            {/* Trang full-height khong co cho cho footer: <main> khong cuon nua
+                nen footer se bi dan cung o day man hinh o MOI luc, an mat mot
+                dai chieu cao ma man bang can. Noi dung footer la chu thich tinh
+                (thuat toan, nguon du lieu) - khong mat gi khi vang o day. */}
+            {!fullHeight && footer}
           </main>
         </div>
       </div>

@@ -1650,25 +1650,43 @@ textarea:focus-visible {
    merge-xuong bang rowSpan) - font nho + khong dam, luoi ke day, cuon ngang/doc. ---- */
 
 .xls-scroll {
-  /* CHI cuon NGANG. Bang mirror 29 cot chac chan rong hon man hinh nen phai co
-     overflow-x, nhung KHONG dat max-height/overflow-y nua.
+  /* Cuon CA HAI CHIEU, va la khung cuon DUY NHAT cua trang "Du lieu hoc phan".
 
-     Ban truoc ep max-height:72vh de bang tu cuon doc, vi shell CU
-     (.page{min-height:100vh}) khong ep duoc chieu cao that cho chuoi flex ben
-     tren -> nhieu lop se day ca TRANG cao ra thay vi cuon trong bang. Shell MOI
-     (AppLayout) da co <main> voi overflow-y-auto lo viec cuon doc cho toan bo
-     noi dung, nen giu them mot vung cuon doc long ben trong chi tao ra hai thanh
-     cuon chong nhau - nguoi dung phai doan cai nao dang dieu khien cai gi.
+     Bang mirror 29 cot rong hon man hinh nen luon can overflow-x. Cuon DOC thi
+     truoc day de <main> lo (o day chi co overflow-x) - nhung `position: sticky`
+     bao gio cung bam vao KHUNG CUON GAN NHAT, ma dat overflow-x da bien chinh
+     div nay thanh khung cuon roi (CSS: mot truc khac `visible` thi truc kia tu
+     `visible` thanh `auto`). Hau qua: thead sticky bam vao div nay, ma div nay
+     khong bao gio cuon doc -> hang tieu de khong dinh duoc gi ca.
+
+     Nen bang phai TU SO HUU cuon doc. Van khong sinh ra "hai thanh cuon chong
+     nhau" - noi lo cu - vi trang duoc dung lai theo kieu chiem tron chieu cao
+     (AppLayout fullHeight): <main> khong con cuon, chi con DUY NHAT thanh cuon
+     cua bang. `flex: 1; min-height: 0` de bang an het chieu cao con lai sau
+     thanh cong cu; thieu min-height thi flex item khong chiu co nho hon noi
+     dung va bang lai tran ra ngoai man hinh.
 
      KHONG co vien/bo goc rieng: bang nay nam sat mep trong the card cua
      ManualEntryPage (card da co vien + bo goc, thanh cong cu ngan bang border-b).
      Them mot lop vien nua thanh hop-trong-hop. Card do phai co overflow-hidden
      de goc vuong cua bang khong tho ra ngoai goc bo tron cua card. */
-  overflow-x: auto;
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .xls-table {
-  border-collapse: collapse;
+  /* `separate` chu KHONG `collapse` - bat buoc de dong bang duoc hang tieu de va
+     cot dau. Voi border-collapse:collapse, vien la cua BANG ve chu khong phai
+     cua tung o; o nao `position: sticky` truot ra khoi dong chay thi trinh duyet
+     bo luon phan vien do -> hang tieu de va 5 cot dau se tuot het ke khi cuon.
+
+     Voi `separate` moi o tu ve vien cua no. Chi ve border-right + border-bottom
+     (canh tren/trai cua bang do hang tieu de va cot dau tien ganh) de khong bi
+     nhan doi thanh vach 2px o moi ranh giua hai o - nhin ra dung nhu ban
+     collapse cu: moi vach 1px. */
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 10px;
   white-space: nowrap;
   width: max-content;
@@ -1677,10 +1695,25 @@ textarea:focus-visible {
 
 .xls-table th,
 .xls-table td {
-  border: 1px solid #d5dbe3;
+  border: 0;
+  border-right: 1px solid #d5dbe3;
+  border-bottom: 1px solid #d5dbe3;
   padding: 2px 5px;
   text-align: left;
   vertical-align: middle;
+}
+
+/* Vien NGOAI cua bang, bu lai cho `separate` (moi o chi ve phai + duoi).
+   Dat len chinh o thay vi len <table>: vien cua <table> nam ngoai vung dinh,
+   cuon di la mat, con o thi dinh theo. Cot dau tien la o merge cao ca nhom hoc
+   phan nen moi dong deu duoc ganh vien trai. */
+.xls-table thead tr:first-child > th {
+  border-top: 1px solid #d5dbe3;
+}
+
+.xls-table th.xls-c-tt,
+.xls-table td.xls-c-tt {
+  border-left: 1px solid #d5dbe3;
 }
 
 .xls-table thead th {
@@ -1715,12 +1748,21 @@ textarea:focus-visible {
   background: #f9e3e3;
 }
 
-/* Vien tren tach hai NHOM HOC PHAN ke nhau - doc duoc ranh gioi ca khi khong
-   hover. Chi 1px, bu lai bang mau dam hon vien luoi thuong (#94a3b8 so voi
-   #d5dbe3): vien cang day cang de bi rang cua khi zoom le, ma o day 1px da du
-   vi con co o merge va nen vung cung danh dau nhom. */
-.xls-table tbody + tbody td {
-  border-top: 1px solid #94a3b8;
+/* Vach tach hai NHOM HOC PHAN ke nhau - doc duoc ranh gioi ca khi khong hover.
+   Chi 1px, bu lai bang mau dam hon vien luoi thuong (#94a3b8 so voi #d5dbe3):
+   vien cang day cang de bi rang cua khi zoom le, ma o day 1px da du vi con co o
+   merge va nen vung cung danh dau nhom.
+
+   Lam bang cach DOI MAU vien duoi cua nhom TREN, chu khong them vien tren cho
+   nhom duoi. Tu khi bang chuyen sang border-collapse:separate (bat buoc, de dong
+   bang duoc hang tieu de - xem .xls-table), hai o ke nhau khong con gop vien:
+   them mot vien nua la thanh vach 2px, dung cai ma ghi chu tren muon tranh.
+
+   Hai ve: cac o thuong nam o dong CUOI nhom; con o merge (Ma/Ten hoc phan/So
+   TC/Chot lich) thuoc ve dong DAU nhung day cua chung moi la day cua ca nhom. */
+.xls-table tbody:has(+ tbody) > tr:last-child > td,
+.xls-table tbody:has(+ tbody) > tr:first-child > td.xls-course {
+  border-bottom-color: #94a3b8;
 }
 
 /* ─── Chia bang theo FORM bang NEN ───────────────────────────────────
@@ -1909,6 +1951,70 @@ textarea:focus-visible {
   vertical-align: middle; text-align: center;
   white-space: normal;   /* "Chốt lịch" o tieu de tu xuong 2 dong cho vua */
 }
+
+/* ---- DONG BANG hang tieu de + 5 cot dau (freeze panes kieu Excel) ----------
+   Bang co 29 cot va vai tram dong: cuon sang phai thi khong con biet dang doc
+   lop cua mon nao, cuon xuong thi khong con biet cot nao la cot nao. Dong bang
+   dung nhung o TRA LOI hai cau do:
+     · doc  - ba tang tieu de
+     · ngang - TT / Ma hoc phan / Ten hoc phan / So tin chi / Chot lich
+
+   Ca hai deu bam vao .xls-scroll (khung cuon duy nhat cua trang - xem ghi chu o
+   .xls-scroll ve vi sao bang phai tu so huu cuon doc).
+
+   Sticky dat len ca <th> lan <td>: cac o cot dau la o MERGE cao ca nhom hoc
+   phan, chung thuoc ve dong DAU nhom nhung phu bong ca nhom - nen dinh mot o la
+   du cho moi dong cua nhom do. */
+
+.xls-table thead {
+  position: sticky;
+  top: 0;
+  /* Cao hon z-index cua cac o cot dau ben duoi, de goc tren-trai (5 o tieu de
+     vua dinh doc vua dinh ngang) khong bi o cot dau cua dong dau tien de len. */
+  z-index: 3;
+}
+
+.xls-table th.xls-c-tt,  .xls-table td.xls-c-tt,
+.xls-table th.xls-c-ma,  .xls-table td.xls-c-ma,
+.xls-table th.xls-c-ten, .xls-table td.xls-c-ten,
+.xls-table th.xls-c-tc,  .xls-table td.xls-c-tc,
+.xls-table th.xls-chot-head, .xls-table td.xls-chot {
+  position: sticky;
+  z-index: 1;
+}
+
+/* Moc trai = tong be rong cac cot dung TRUOC. SectionTable DO be rong that roi
+   ghi vao --fz-* (xem useLayoutEffect o do), vi be rong khai bao ben tren chi la
+   `width` - table-layout mac dinh van co the noi cot ra theo noi dung, va zoom
+   le lam moi so le di vai phan muoi px. Lech mot chut thoi la cac cot dinh
+   chong len nhau hoac ho ra mot khe trang.
+
+   Gia tri du phong = cong don dung cac `width` khai bao ben tren (3 · 5.5 · 15 ·
+   3 · 2.6rem), dung cho khoanh khac truoc khi phep do dau tien chay xong. */
+.xls-table th.xls-c-tt,  .xls-table td.xls-c-tt  { left: 0; }
+.xls-table th.xls-c-ma,  .xls-table td.xls-c-ma  { left: var(--fz-1, 3rem); }
+.xls-table th.xls-c-ten, .xls-table td.xls-c-ten { left: var(--fz-2, 8.5rem); }
+.xls-table th.xls-c-tc,  .xls-table td.xls-c-tc  { left: var(--fz-3, 23.5rem); }
+.xls-table th.xls-chot-head, .xls-table td.xls-chot { left: var(--fz-4, 26.5rem); }
+
+/* Bong danh dau ranh gioi vung dong bang - CHI khi da cuon qua no. Bong hien
+   san luc chua cuon se doc ra thanh mot vet toi vo co giua bang.
+   data-sx / data-sy do SectionTable dat theo scrollLeft / scrollTop. */
+.xls-scroll[data-sx="1"] .xls-table th.xls-chot-head,
+.xls-scroll[data-sx="1"] .xls-table td.xls-chot {
+  box-shadow: 4px 0 5px -3px rgb(15 23 42 / 0.35);
+}
+
+.xls-scroll[data-sy="1"] .xls-table thead th {
+  box-shadow: 0 3px 4px -3px rgb(15 23 42 / 0.35);
+}
+
+/* Goc tren-trai: dinh ca hai chieu nen phai mang CA HAI bong (box-shadow khong
+   cong don qua nhieu rule - rule sau ghi de rule truoc). */
+.xls-scroll[data-sx="1"][data-sy="1"] .xls-table th.xls-chot-head {
+  box-shadow: 4px 0 5px -3px rgb(15 23 42 / 0.35),
+              0 3px 4px -3px rgb(15 23 42 / 0.35);
+}
 /* Ten hoc phan + badge trang thai xep doc trong CUNG mot o merge. */
 .xls-course-ten { display: flex; flex-direction: column; align-items: flex-start; gap: 0.2rem; }
 .xls-chot-badge {
@@ -1937,5 +2043,10 @@ textarea:focus-visible {
   color: #047857;
 }
 /* Ca vung hoc phan DA CHOT: nen xanh rat nhat, de luot mat la thay ngay mon nao
-   xong - khong phai doc tung o "Chot lich". */
-tbody:has(.xls-chot-badge) .xls-course { background: color-mix(in srgb, #10b981 7%, transparent); }
+   xong - khong phai doc tung o "Chot lich".
+
+   Pha voi #fff chu khong voi `transparent`, du ket qua nhin y het: cac o nay la
+   o DONG BANG (freeze panes), chung truot de len phan bang dang cuon ben duoi.
+   Nen chi can hoi trong suot mot chut la doc thay chu cua cot khac chay xuyen
+   qua. Ben duoi chung von la nen trang cua trang nen #fff giu nguyen mau cu. */
+tbody:has(.xls-chot-badge) .xls-course { background: color-mix(in srgb, #10b981 7%, #fff); }

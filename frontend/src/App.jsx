@@ -72,6 +72,12 @@ function clampPageForRole(page, role) {
 // padding: moi px be ngang deu dang gia. Cac trang con lai giu padding chuan.
 const BLEED_PAGES = new Set(["manual"]);
 
+// Trang TU LO cuon doc thay vi de <main> cuon ca trang (xem `fullHeight` trong
+// AppLayout). "Du lieu hoc phan" can dieu nay de DONG BANG hang tieu de 3 tang +
+// 5 cot dau cua bang: sticky chi bam duoc vao khung cuon gan nhat, nen chinh
+// khung cuon cua bang phai la thu cuon doc.
+const FULL_HEIGHT_PAGES = new Set(["manual"]);
+
 function AppShell() {
   const [role, setRoleState] = useState(loadRole);
   const setRole = (r) => {
@@ -131,6 +137,7 @@ function AppShell() {
       title={currentSubLabel ?? PAGE_LABELS[safePage]}
       crumbs={currentSubLabel ? PAGE_LABELS[safePage] : null}
       bleed={BLEED_PAGES.has(safePage)}
+      fullHeight={FULL_HEIGHT_PAGES.has(safePage)}
       onNavigate={goto}
       onChangeRole={() => setRole(null)}
       footer={<Footer />}
