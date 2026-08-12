@@ -17,7 +17,7 @@ const FALLBACK_COLOR = {
 // mau = phan loai (groupColor tu LessonGridBoard), vien do khi highlighted =
 // canh bao, luon de len tren khong doi mau nen.
 const LessonCard = memo(function LessonCard({
-  lesson, isHighlighted, onClearOverride, groupColor, onPickProblem, detailed = false,
+  lesson, isHighlighted, onClearOverride, onTachHocChung, groupColor, onPickProblem, detailed = false,
   canDrag = false, onDragStart, onDragEnd,
 }) {
   const problems = lesson.problems ?? [];
@@ -228,6 +228,22 @@ const LessonCard = memo(function LessonCard({
                 <div className="tt-hc-tong">
                   Tổng <strong>{lesson.hocChung.tongSV} sinh viên</strong> — phòng phải chứa đủ
                 </div>
+              )}
+              {/* TACH NHOM: dat ngay trong khoi dang liet ke nhom - do la cho
+                  nguoi dung dang xem nhom nen cung la cho ho quyet dinh bo no,
+                  giong cach nut "Bo ghim" nam trong khoi ghim ben duoi. */}
+              {onTachHocChung && (
+                <button
+                  type="button"
+                  className="tt-hc-btn"
+                  title={
+                    "Tách nhóm: các lớp trở lại độc lập. Từ lần Giải sau hệ thống "
+                    + "lại xếp chúng riêng và báo trùng giảng viên nếu vẫn cùng giờ."
+                  }
+                  onClick={() => { onTachHocChung(lesson.hocChung.id); setLocked(false); }}
+                >
+                  Tách nhóm — không học chung nữa
+                </button>
               )}
             </div>
           )}

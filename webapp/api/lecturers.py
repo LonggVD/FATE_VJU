@@ -11,6 +11,7 @@ from flask import Blueprint, jsonify, request
 
 from api.common import loi
 from domain.response import build_data_response
+from domain.hoc_chung import tach_nhom_khong_hop_le
 from domain.teachers import ap_lai_loai_gv, doi_chieu_danh_sach
 from snapshot import save_snapshot
 from state import STATE
@@ -62,10 +63,15 @@ def api_manual_lecturers_commit():
                        "count": pending["count"]}
     STATE["co_huu_pending"] = None
     doi = ap_lai_loai_gv(STATE["data"]) if STATE["data"] else []
+    # Phan loai lai HANG LOAT co the lam mot nhom hoc chung lech pha (mot lop sang
+    # thinh giang, lop kia con co huu) - hai pha giai la hai bai toan rieng nen
+    # nhom do mat rang buoc cung gio. Khong con phep sua nao de tu choi, phai tach
+    # va noi ra.
+    tach = tach_nhom_khong_hop_le(STATE["data"]) if STATE["data"] else []
     save_snapshot()
     return jsonify({
         "count": STATE["co_huu"]["count"], "fileName": STATE["co_huu"]["fileName"],
-        "changed": doi,
+        "changed": doi, "hocChungSplit": tach,
         **(build_data_response(STATE["data"], STATE.get("extra")) if STATE["data"] else {}),
     })
 
@@ -76,8 +82,9 @@ def api_manual_lecturers_clear():
     STATE["co_huu"] = None
     STATE["co_huu_pending"] = None
     doi = ap_lai_loai_gv(STATE["data"]) if STATE["data"] else []
+    tach = tach_nhom_khong_hop_le(STATE["data"]) if STATE["data"] else []
     save_snapshot()
     return jsonify({
-        "loaded": False, "changed": doi,
+        "loaded": False, "changed": doi, "hocChungSplit": tach,
         **(build_data_response(STATE["data"], STATE.get("extra")) if STATE["data"] else {}),
     })

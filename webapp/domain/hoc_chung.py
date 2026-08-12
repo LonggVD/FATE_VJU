@@ -189,6 +189,76 @@ def dong_bo_gio_nhom(data, nhom):
     return doi
 
 
+def _nhan_pha(loai):
+    return {"GUEST": "Thỉnh giảng", "RESIDENT": "Cơ hữu"}.get(loai, loai)
+
+
+def kiem_tra_sua_lop(data, sid, fields):
+    """Loi (str) neu SUA lop nay lam nhom hoc chung khong con la mot buoi - hoac None.
+
+    Ba dieu kien o kiem_tra_nhom() duoc kiem luc TAO nhom, nhung khong ai canh ve
+    sau: do thuc te truoc khi co ham nay, sua so tiet cua mot thanh vien tu 2 len 3
+    van duoc chap nhan va nhom van con - solver ep cung `start` nhung hai buoi ket
+    thuc khac nhau, tuc khong con la mot buoi day.
+
+    TU CHOI thay vi tu tach nhom: bat giao vu tach truoc roi sua, dung cach chot
+    lich dang lam ("Bo chot hoc phan truoc khi sua gio") - co y thuc va co dau vet,
+    thay vi sua xong moi biet nhom da tan.
+    """
+    ds = [x for x in thanh_vien(data, sid) if x != sid]
+    if not ds:
+        return None
+    khac = [data["sections"][x] for x in ds]
+    ten = ", ".join(f"#{x['id']}" + (f" ({x.get('class_code')})" if x.get("class_code") else "")
+                    for x in khac)
+    duoi = f" Lớp học chung với {ten} — tách nhóm học chung trước."
+
+    if fields.get("duration") is not None and any(x["duration"] != fields["duration"] for x in khac):
+        return (f"Không đổi được số tiết: các lớp học chung phải cùng số tiết mỗi buổi "
+                f"(các lớp kia đang {', '.join(str(x['duration']) for x in khac)} tiết)." + duoi)
+    if fields.get("room_type") and any(x["room_type"] != fields["room_type"] for x in khac):
+        return (f"Không đổi được loại phòng: các lớp học chung phải cùng loại phòng "
+                f"(các lớp kia đang {', '.join(x['room_type'] for x in khac)})." + duoi)
+    if fields.get("teacher_type") and any(x["teacher_type"] != fields["teacher_type"] for x in khac):
+        # Hai pha giai la HAI mo hinh CP-SAT rieng - khong the rang buoc `start`
+        # cheo giua chung, nen nhom vat qua hai pha se mat rang buoc cung gio ma
+        # KHONG bao gi ca (vo am tham).
+        return (f"Không đổi được giảng viên: đổi thế này làm lớp chuyển sang "
+                f"{_nhan_pha(fields['teacher_type'])} trong khi các lớp học chung với nó vẫn là "
+                f"{', '.join(_nhan_pha(x['teacher_type']) for x in khac)}. Hai giai đoạn xếp lịch "
+                f"là hai bài toán riêng, không thể buộc cùng giờ được." + duoi)
+    return None
+
+
+def tach_nhom_khong_hop_le(data):
+    """Tach cac nhom da MAT dieu kien (khac so tiet/loai phong/giai doan). Tra ve
+    danh sach {id, sectionIds, vi_sao} de bao len giao dien.
+
+    Dung cho cac thao tac HANG LOAT khong the "tu choi mot phep sua" duoc: nap
+    danh sach GV co huu hay doi loai mot GV se phan loai lai NHIEU lop cung luc,
+    trong do co the co thanh vien nhom bi lech pha. O do khong con phep sua nao de
+    chan, nen phai tach nhom va NOI RA - de yen thi nhom mat rang buoc cung gio ma
+    khong ai biet."""
+    da_tach = []
+    for nhom in list(cac_nhom(data)):
+        ds = [x for x in (nhom.get("sectionIds") or []) if x in data["sections"]]
+        if len(ds) < 2:
+            continue
+        secs = [data["sections"][x] for x in ds]
+        vi_sao = None
+        if len({x["duration"] for x in secs}) > 1:
+            vi_sao = "các lớp không còn cùng số tiết mỗi buổi"
+        elif len({x["room_type"] for x in secs}) > 1:
+            vi_sao = "các lớp không còn cùng loại phòng"
+        elif len({x["teacher_type"] for x in secs}) > 1:
+            vi_sao = ("các lớp không còn cùng giai đoạn xếp lịch ("
+                      + ", ".join(f"#{x['id']}: {_nhan_pha(x['teacher_type'])}" for x in secs) + ")")
+        if vi_sao:
+            xoa_nhom(data, nhom.get("id"))
+            da_tach.append({"id": nhom.get("id"), "sectionIds": ds, "vi_sao": vi_sao})
+    return da_tach
+
+
 def xoa_nhom(data, nhom_id):
     """Bo mot nhom hoc chung. Tra ve nhom vua bo, hoac None neu khong co."""
     ds = cac_nhom(data)
