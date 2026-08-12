@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { LayoutGrid, Maximize2, Minimize2, Map as MapIcon, Rows3, Save, TriangleAlert, X } from "lucide-react";
 import { useAppData } from "../../context/AppDataContext";
-import { buildProblemInbox } from "../../adapters/problemInbox";
+import { buildProblemInbox, filterProblemInbox } from "../../adapters/problemInbox";
 import { buildScheduleView, scopeLabel, SCOPE, DEFAULT_FILTER } from "../../adapters/scheduleView";
 import { analyzeSubmissions, teacherReportedHours } from "../../adapters/submissionQueue";
 import ReportedHoursPanel from "../teacher/ReportedHoursPanel";
@@ -95,6 +95,14 @@ export default function SchedulePage({ role, filter, onFilterChange }) {
     () => buildScheduleView({ data, guestResult, residentResult, inbox, filter: f }),
     [data, guestResult, residentResult, inbox, filter],
   );
+  // Hop thu hien tren man: DA LOC theo dung pham vi dang chon o luoi. `inbox`
+  // day du van duoc buildScheduleView dung (to mau buoi co van de) - loc ban do
+  // se lam buoi ngoai pham vi mat danh dau khi doi bo loc.
+  const inboxHien = useMemo(
+    () => filterProblemInbox(inbox, data, f),
+    [inbox, data, f.scope, f.scopeValue],
+  );
+
   const sq = useMemo(() => (data ? analyzeSubmissions(data) : null), [data]);
   const legend = useMemo(() => buildLegend(view.lessons, f.colorBy), [view.lessons, f.colorBy]);
 
@@ -154,22 +162,34 @@ export default function SchedulePage({ role, filter, onFilterChange }) {
       value: sq ? `${sq.doneCount}/${sq.guestCount}` : "—",
       state: sq && sq.queue.length === 0 ? "done" : "todo",
     },
+    // guestResult/residentResult co the la LICH BAN DAU doc tu file (initial),
+    // chua phai ket qua giai - thanh tien trinh phai noi ro, khong thi nap file
+    // xong buoc 2/3 hien "done" ma chua ai bam Giai.
     {
       key: "guest",
       label: "Xếp thỉnh giảng",
-      value: guestResult ? `${guestResult.placedCount}/${guestResult.total}` : "chưa chạy",
-      state: guestResult ? "done" : "todo",
+      value: !guestResult
+        ? "chưa chạy"
+        : guestResult.initial
+          ? `${guestResult.placedCount} buổi chốt từ file`
+          : `${guestResult.placedCount}/${guestResult.total}`,
+      state: guestResult && !guestResult.initial ? "done" : "todo",
       action: solveGuest,
-      actionLabel: guestResult ? "Giải lại" : "Giải",
+      actionLabel: guestResult && !guestResult.initial ? "Giải lại" : "Giải",
     },
     {
       key: "resident",
       label: "Ghép cơ hữu",
-      value: residentResult ? `${residentResult.placedCount}/${residentResult.total}` : "chưa chạy",
-      state: residentResult ? "done" : "todo",
+      value: !residentResult
+        ? "chưa chạy"
+        : residentResult.initial
+          ? `${residentResult.placedCount} buổi chốt từ file`
+          : `${residentResult.placedCount}/${residentResult.total}`,
+      state: residentResult && !residentResult.initial ? "done" : "todo",
       action: solveResident,
-      actionLabel: residentResult ? "Giải lại" : "Giải",
-      disabled: !guestResult,
+      actionLabel: residentResult && !residentResult.initial ? "Giải lại" : "Giải",
+      // Lich ban dau khong tinh la "da chay Giai doan 1" (backend cung chan).
+      disabled: !guestResult || guestResult.initial,
     },
   ];
 
@@ -273,7 +293,7 @@ export default function SchedulePage({ role, filter, onFilterChange }) {
 
   const inboxBlock = (
     <ProblemInbox
-      inbox={inbox}
+      inbox={inboxHien}
       activeId={activeProblem?.id ?? null}
       onPick={pickProblem}
       onClear={() => setActiveProblem(null)}
@@ -320,6 +340,7 @@ export default function SchedulePage({ role, filter, onFilterChange }) {
           >
             <option value={SCOPE.ALL}>Toàn khoa</option>
             <option value={SCOPE.PROGRAM}>Theo chương trình</option>
+            <option value={SCOPE.COHORT}>Theo khoá</option>
             <option value={SCOPE.TEACHER}>Theo giảng viên</option>
           </NativeSelect>
         </div>
@@ -333,6 +354,18 @@ export default function SchedulePage({ role, filter, onFilterChange }) {
             searchable
             value={f.scopeValue || null}
             options={view.programs}
+            onChange={(v) => set({ scopeValue: v ?? "" })}
+          />
+        )}
+
+        {/* Khoa (cot "Khóa" cua bang du lieu hoc phan, vd VJU2026) - in TKB cho
+            mot khoa la viec thuong lam, truoc day phai loc tay tung chuong trinh. */}
+        {f.scope === SCOPE.COHORT && (
+          <FilterSelect
+            label="Tất cả khoá"
+            searchable
+            value={f.scopeValue || null}
+            options={view.cohorts}
             onChange={(v) => set({ scopeValue: v ?? "" })}
           />
         )}

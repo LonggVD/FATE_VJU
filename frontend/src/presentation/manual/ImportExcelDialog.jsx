@@ -21,7 +21,7 @@ import {
  * (bao nhieu lop/hoc phan/GV, bao nhieu dong bi bo va vi sao) truoc khi quyet.
  */
 export default function ImportExcelDialog({ open, onOpenChange }) {
-  const { loading, doImportPreview, doImportFixTimeRow, doImportCommit } = useAppData();
+  const { loading, doImportPreview, doImportCommit } = useAppData();
   const inputRef = useRef(null);
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -47,20 +47,9 @@ export default function ImportExcelDialog({ open, onOpenChange }) {
     }
   };
 
-  // "Buoc 1: chuan hoa du lieu" - doi nguon gio 1 dong TRUOC khi nap. Ket qua
-  // tra ve la ban preview MOI (data/summary/timeReviews da tinh lai) - chi can
-  // gan de len, chua ghi gi vao STATE thuc ca (chi handleCommit moi lam vay).
-  const handleFixTime = async (excelRow, source) => {
+  const handleCommit = async (mode = "replace") => {
     try {
-      setPreview(await doImportFixTimeRow(excelRow, source));
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  const handleCommit = async () => {
-    try {
-      await doImportCommit();
+      await doImportCommit(mode);
       onOpenChange(false);
       reset();
     } catch (err) {
@@ -157,15 +146,34 @@ export default function ImportExcelDialog({ open, onOpenChange }) {
                 Mọi dòng có dữ liệu trong file đều được nạp — kể cả lớp chưa có giảng viên.
               </p>
 
-              {/* Buoc 1: CHUAN HOA DU LIEU - xac nhan/doi lai nguon gio cho tung
-                  lop truoc khi qua buoc 2 (nap vao he thong). Dat TRUOC cac
-                  ChiTiet canh bao chung, vi day la viec CAN LAM, khong chi la
-                  thong tin doc qua. */}
-              <TimeReviewSection
-                reviews={preview.timeReviews}
-                onFix={handleFixTime}
-                disabled={loading}
-              />
+              {/* LOI TRONG CHINH FILE - khac han cac canh bao ben duoi (von noi
+                  ve viec import da phai tu quyet dinh gi). Day la nhung cho FILE
+                  ghi sai: mot ma lop dung cho 2 hoc phan, ten khac dau thanh 2
+                  hoc phan, mot email 2 nguoi, dong nhap trung... Import khong
+                  sua duoc va cung khong nen tu doan - phai sua o file goc. Truoc
+                  day buoc xem truoc khong he hien, phai viet script rieng moi
+                  thay, tuc thuc te la khong ai thay. */}
+              {preview.dataIssuesSummary?.soNghiemTrong > 0 && (
+                <ChiTiet
+                  tone="orange"
+                  tieuDe={`Kiểm tra dữ liệu — ${preview.dataIssuesSummary.soNghiemTrong} chỗ nghi SAI trong file`}
+                  moTa="Dữ liệu vẫn nạp được, nhưng những chỗ này gần như chắc chắn là sai trong file gốc — nên sửa file rồi nạp lại:"
+                  nhom={preview.dataIssues.filter((g) => g.muc === "nghiem_trong")}
+                  // Nguoi sua duoc nhung loi nay la khoa/CTDT, khong phai nguoi
+                  // dang bam nhap - ho can mot file mo bang Excel duoc, co so dong
+                  // de nhay den, chu khong phai anh chup man hinh.
+                  taiVe="/api/manual/import/issues.xlsx"
+                />
+              )}
+
+              {preview.dataIssuesSummary?.soLuuY > 0 && (
+                <ChiTiet
+                  tone="blue"
+                  tieuDe={`Kiểm tra dữ liệu — ${preview.dataIssuesSummary.soLuuY} chỗ nên rà lại`}
+                  moTa="Không chắc là sai, nhưng nên biết: ô để trống, ghi chú viết lẫn vào ô dữ liệu…"
+                  nhom={preview.dataIssues.filter((g) => g.muc === "luu_y")}
+                />
+              )}
 
               {s.soDongBoQua > 0 && (
                 <ChiTiet
@@ -181,9 +189,7 @@ export default function ImportExcelDialog({ open, onOpenChange }) {
                   tone="blue"
                   tieuDe={`${s.soCanhBao} dòng có lưu ý (vẫn được nạp)`}
                   moTa="Những dòng này VẪN vào form, nhưng có chỗ hệ thống phải tự quyết — nên biết để rà lại:"
-                  // "lech_nguon_gio" da co man rieng (TimeReviewSection ngay
-                  // tren) - loc ra de khong liet ke trung lap o day.
-                  nhom={preview.warningGroups.filter((g) => g.loai !== "lech_nguon_gio")}
+                  nhom={preview.warningGroups}
                 />
               )}
 
@@ -210,11 +216,17 @@ export default function ImportExcelDialog({ open, onOpenChange }) {
           )}
         </div>
 
-        <DialogFooter className="border-t px-6 py-3">
+        <DialogFooter className="flex-wrap gap-2 border-t px-6 py-3">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Hủy
           </Button>
-          <Button variant="destructive" disabled={!preview || loading} onClick={handleCommit}>
+          {/* GOP THEM: de nap file khoa nay roi nap tiep file khoa khac, hoac nap
+              lai file da sua ma khong mat cong da chinh. Lop trung (cung ma lop +
+              hoc phan + GV + gio) bi bo qua, so luong bao lai sau khi nap. */}
+          <Button variant="outline" disabled={!preview || loading} onClick={() => handleCommit("merge")}>
+            {loading ? "Đang nạp…" : "Gộp thêm vào dữ liệu hiện có"}
+          </Button>
+          <Button variant="destructive" disabled={!preview || loading} onClick={() => handleCommit("replace")}>
             {loading ? "Đang nạp…" : `Xóa dữ liệu cũ và nạp ${s?.soLopDungDuoc ?? ""} lớp`}
           </Button>
         </DialogFooter>
@@ -223,101 +235,12 @@ export default function ImportExcelDialog({ open, onOpenChange }) {
   );
 }
 
-/**
- * "Buoc 1: chuan hoa du lieu" - file co 2 cot ghi gio (text tu do / Thu-Tiet
- * dau-Tiet cuoi cau truc) hay LECH NHAU trong du lieu that (xem
- * NHAP-DU-LIEU-TU-EXCEL.md). He thong tu chon 1 ben theo mac dinh (uu tien
- * text) hoac tu phat hien duoc nhom chac chan (certain=true, vd 2 lop cung
- * hoc phan bi copy sot 1 cot), nhung phan CON LAI (certain=false) van chi la
- * DOAN, khong the tu tin - giao vu phai TU MAT xem va chon lai truoc khi qua
- * buoc 2 (nap vao he thong), thay vi am tham tin theo mac dinh nhu truoc.
- */
-function TimeReviewSection({ reviews, onFix, disabled }) {
-  if (!reviews?.length) return null;
-  const canXemLai = reviews.filter((r) => !r.certain).length;
-
-  return (
-    <details className="rounded-lg border border-violet-500/30 bg-violet-500/10" open>
-      <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
-        Xác nhận giờ học — {reviews.length} lớp có 2 nguồn giờ khác nhau
-        {canXemLai > 0 && (
-          <span className="ml-2 rounded-full bg-amber-500/20 px-2 py-0.5 text-xs font-normal text-amber-700">
-            {canXemLai} cần xem lại
-          </span>
-        )}
-      </summary>
-      <div className="space-y-2 px-3 pb-3 text-xs">
-        <p className="text-muted-foreground">
-          File có 2 cột ghi giờ (text tự do và Thứ/Tiết đầu/Tiết cuối) — dưới đây là các lớp
-          mà 2 cột ghi khác nhau. Bấm để chọn giờ đúng cho từng lớp trước khi nạp vào hệ thống.
-        </p>
-        <div className="max-h-72 space-y-1.5 overflow-y-auto">
-          {reviews.map((r) => (
-            <div key={r.excelRow} className="bg-background/60 rounded-md border p-2.5">
-              <div className="flex flex-wrap items-center justify-between gap-1.5">
-                <p className="font-medium">
-                  {r.classCode || `Dòng ${r.excelRow}`}
-                  <span className="text-muted-foreground font-normal"> · {r.courseName} — {r.teacherName}</span>
-                </p>
-                {r.certain ? (
-                  <span className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-emerald-700">
-                    đã tự phát hiện
-                  </span>
-                ) : (
-                  <span className="shrink-0 rounded-full bg-amber-500/20 px-2 py-0.5 text-amber-700">
-                    cần xem lại
-                  </span>
-                )}
-              </div>
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                <button
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => onFix(r.excelRow, "text")}
-                  className={
-                    "rounded-md border px-2 py-1 text-left disabled:opacity-60" +
-                    (r.chosen === "text"
-                      ? " border-violet-500 bg-violet-500/15 font-medium"
-                      : " hover:bg-muted/60")
-                  }
-                >
-                  Cột text: {r.textLabel}
-                </button>
-                <button
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => onFix(r.excelRow, "structured")}
-                  className={
-                    "rounded-md border px-2 py-1 text-left disabled:opacity-60" +
-                    (r.chosen === "structured"
-                      ? " border-violet-500 bg-violet-500/15 font-medium"
-                      : " hover:bg-muted/60")
-                  }
-                >
-                  Cột cấu trúc: {r.structuredLabel}
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </details>
-  );
-}
-
-/**
- * Liet ke theo NHOM LY DO, khong phai danh sach dong phang.
- *
- * Ban dau do 20 dong dau ra man hinh: 20 dong lap y het nhau cong mot dong
- * "…va 12 dong nua cung loai" - khong tra loi duoc cau hoi that su la "quy tac
- * nao lam dong bi bo, va tong cong bao nhieu". Nay moi nhom = mot quy tac, kem
- * so luong, cac gia tri da gap, va so dong Excel de con mo file ra doi chieu.
- */
-function ChiTiet({ tone, tieuDe, moTa, nhom }) {
+function ChiTiet({ tone, tieuDe, moTa, nhom, taiVe }) {
   const mau = {
     amber: "border-amber-500/20 bg-amber-500/10",
     blue: "border-blue-500/20 bg-blue-500/10",
     red: "border-red-500/20 bg-red-500/10",
+    orange: "border-orange-500/30 bg-orange-500/10",
   }[tone];
 
   return (
@@ -325,10 +248,20 @@ function ChiTiet({ tone, tieuDe, moTa, nhom }) {
       <summary className="cursor-pointer px-3 py-2 text-sm font-medium">{tieuDe}</summary>
       <div className="space-y-2.5 px-3 pb-3 text-xs">
         <p className="text-muted-foreground">{moTa}</p>
+        {taiVe && (
+          <a
+            href={taiVe}
+            className="inline-flex items-center gap-1 rounded-md border px-2 py-1 font-medium hover:bg-muted/60"
+          >
+            Tải danh sách này ra Excel để gửi khoa sửa
+          </a>
+        )}
         {(nhom || []).map((g) => (
           <div key={g.loai} className="bg-background/60 rounded-md border p-2.5">
             <p className="font-medium">
-              <span className="tabular-nums">{g.so}</span> dòng — {g.nhan}
+              {/* Co nhom dem TRUONG HOP chu khong dem dong (vd "5 ma lop bi dung
+                  cho nhieu hoc phan") - xem fate_audit._nhom. */}
+              <span className="tabular-nums">{g.so}</span> {g.donVi || "dòng"} — {g.nhan}
             </p>
 
             {g.chiTiet?.length > 0 && (

@@ -168,6 +168,27 @@ export function AppDataProvider({ children }) {
 
   // Doc file va tra ve ban xem truoc. KHONG setData - buoc nay chua ghi gi ca,
   // nen cung khong duoc dong vao du lieu dang hien tren man.
+  // Chot lich cho 1 hoc phan (moi lop cua no) / bo chot. Tra ve ban data moi -
+  // gan thang de bang doi trang thai ngay, khong doi refresh.
+  const doChotCourse = useCallback((courseId, payload) => runAction(
+    () => scheduler.chotCourse(courseId, payload),
+    {
+      onSuccess: (res) => res.classes && setData(res),
+      messageFn: (res) =>
+        `Đã chốt lịch học phần "${res.courseName}" — ${res.chotCount} lớp, ghim cứng.`,
+      errorPrefix: "Không chốt được",
+    },
+  ), [runAction]);
+
+  const doBoChotCourse = useCallback((courseId) => runAction(
+    () => scheduler.boChotCourse(courseId),
+    {
+      onSuccess: (res) => res.classes && setData(res),
+      messageFn: (res) => `Đã bỏ chốt học phần "${res.courseName}" — giờ trả về trạng thái trước khi chốt.`,
+      errorPrefix: "Không bỏ chốt được",
+    },
+  ), [runAction]);
+
   const doImportPreview = useCallback((file) => runAction(
     () => scheduler.importPreview(file),
     {
@@ -178,21 +199,59 @@ export function AppDataProvider({ children }) {
     },
   ), [runAction]);
 
-  // "Buoc 1: chuan hoa du lieu" - doi nguon gio 1 dong dang xem truoc. KHONG
-  // setData: pending['data'] moi doi, chua ghi gi vao STATE['data'] thuc (chi
-  // doImportCommit moi lam vay) - dialog tu giu ban preview moi tra ve.
-  const doImportFixTimeRow = useCallback((excelRow, source) => runAction(
-    () => scheduler.importFixTimeRow(excelRow, source),
-    { errorPrefix: "Không đổi được nguồn giờ" },
+  // Danh sach GV co huu: xem truoc (khong ghi gi) roi moi nap.
+  const doLecturersPreview = useCallback((file) => runAction(
+    () => scheduler.lecturersPreview(file),
+    {
+      messageFn: (res) =>
+        `Đã đọc "${res.fileName}": ${res.count} giảng viên cơ hữu, ${res.khop} người đang dạy kỳ này` +
+        ` — sẽ đổi loại ${res.doiSangCoHuu.length + res.doiSangThinhGiang.length} người. Chưa ghi gì.`,
+      errorPrefix: "Không đọc được danh sách",
+    },
   ), [runAction]);
 
-  const doImportCommit = useCallback(() => runAction(
-    () => scheduler.importCommit(),
+  const doLecturersCommit = useCallback(() => runAction(
+    () => scheduler.lecturersCommit(),
     {
-      onSuccess: (res) => { setData(res); setGuestResult(null); setResidentResult(null); },
+      onSuccess: (res) => res.classes && setData(res),
       messageFn: (res) =>
-        `Đã nạp ${(res.classes || []).length} lớp từ ${res.importedFrom || "file Excel"} — ` +
-        `dữ liệu cũ đã bị thay thế.`,
+        `Đã nạp danh sách ${res.count} giảng viên cơ hữu` +
+        (res.changed?.length ? ` — đổi loại ${res.changed.length} người.` : " — không ai bị đổi loại."),
+      errorPrefix: "Không nạp được danh sách",
+    },
+  ), [runAction]);
+
+  const doImportCommit = useCallback((mode = "replace") => runAction(
+    () => scheduler.importCommit(mode),
+    {
+      onSuccess: (res) => {
+        setData(res);
+        // Nap file xong da co LICH BAN DAU tu cac gio chot trong file (backend
+        // dung san, ghim luon) - dat thang vao de man TKB hien ngay, thay vi de
+        // null roi bao "chua co lich nao".
+        setGuestResult(res.guestResult ?? null);
+        setResidentResult(res.residentResult ?? null);
+      },
+      messageFn: (res) => {
+        const g = res.mergeReport;
+        // Gop them: noi ro da THEM bao nhieu va BO QUA bao nhieu lop trung, chu
+        // khong bao "xong" mo ho - so lop tong khong noi len duoc dieu do.
+        if (g) {
+          return (
+            `Đã gộp thêm ${g.soLopThem} lớp từ ${res.importedFrom || "file Excel"}` +
+            (g.soLopTrung ? ` (bỏ qua ${g.soLopTrung} lớp đã có)` : "") +
+            ` — tổng ${(res.classes || []).length} lớp` +
+            // Noi so tiet/ngay da bi noi ra: doi tham so cua CA thoi khoa bieu,
+            // khong duoc am tham.
+            (g.soTietMoiNgay ? `, đã nới lên ${g.soTietMoiNgay} tiết/ngày` : "") +
+            "."
+          );
+        }
+        return (
+          `Đã nạp ${(res.classes || []).length} lớp từ ${res.importedFrom || "file Excel"} — ` +
+          `dữ liệu cũ đã bị thay thế.`
+        );
+      },
       errorPrefix: "Nạp dữ liệu thất bại",
     },
   ), [runAction]);
@@ -257,7 +316,11 @@ export function AppDataProvider({ children }) {
     () => scheduler.clearManualTimes(sectionIds),
     {
       onSuccess: setData,
-      messageFn: (res) => `Đã xoá giờ của ${res.clearedCount} lớp — chuyển về "để hệ thống tự xếp".`,
+      messageFn: (res) =>
+        `Đã xoá giờ của ${res.clearedCount} lớp — chuyển về "để hệ thống tự xếp".` +
+        // Mon da chot khong bi xoa gio (backend chan) - phai noi ra, neu khong
+        // giao vu tuong da xoa het roi di lam viec khac.
+        (res.skippedChotCount ? ` Bỏ qua ${res.skippedChotCount} lớp thuộc học phần đã chốt lịch.` : ""),
       errorPrefix: "Xoá giờ thất bại",
     },
   ), [runAction]);
@@ -275,7 +338,8 @@ export function AppDataProvider({ children }) {
     data, guestResult, residentResult, loading, error,
     refreshData, doSubmitAvailability,
     solveGuest, solveResident, doMoveLesson, doClearOverride, doSaveSchedule,
-    initManual, doImportPreview, doImportFixTimeRow, doImportCommit,
+    initManual, doImportPreview, doImportCommit,
+    doLecturersPreview, doLecturersCommit, doChotCourse, doBoChotCourse,
     addManualTeacher, updateManualTeacher,
     addManualCourse, updateManualCourse,
     addManualSection, updateManualSection, deleteManualSection, doClearManualTimes,

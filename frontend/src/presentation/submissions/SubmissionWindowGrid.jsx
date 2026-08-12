@@ -21,10 +21,16 @@ import { cn } from "@/lib/utils";
 // allowEmpty: cho phep LUU danh sach rong. Mac dinh tat vi o man "Khung giờ đã
 // báo" nop rong la vo nghia (khong con lua chon nao de solver xep). Rieng trang
 // "Giờ rảnh GV" thi can bat: giao vu phai xoa duoc gio da khai nham cua 1 GV.
+// teachingSlots: cac o giang vien DANG THUC SU DAY, suy tu cac lop da chot gio.
+// Hien mau khac (xanh nhat, dau cham) va KHONG tick san: day la BANG CHUNG "day
+// duoc luc nay", con o tick xanh dam la gio DA KHAI - von la GIOI HAN CUNG khi
+// xep cac lop chua co gio. Tron hai thu lam mot thi khai xong cac lop chua co
+// gio cua ho chi duoc xep vao dung nhung o DA BI CHIEM -> khong xep duoc.
 export default function SubmissionWindowGrid({
   numDays,
   slotsPerDay,
   initialSlots = [],
+  teachingSlots = [],
   onSave,
   onCancel,
   saving,
@@ -45,6 +51,9 @@ export default function SubmissionWindowGrid({
   useEffect(() => {
     setGrid(windowSlotsToSelectedCellsMap(initialSlots, slotsPerDay));
   }, [initialSlots, slotsPerDay]);
+
+  // Set de tra cuu nhanh trong lucRender tung o.
+  const dangDay = useMemo(() => new Set(teachingSlots), [teachingSlots]);
 
   const days = DAY_LABELS.slice(0, numDays).map((label, idx) => ({
     idx,
@@ -171,6 +180,15 @@ export default function SubmissionWindowGrid({
           <span className="size-3 rounded-[3px] bg-emerald-500" aria-hidden="true" />
           Có thể dạy
         </span>
+        {dangDay.size > 0 && (
+          <span className="text-muted-foreground inline-flex items-center gap-1.5">
+            <span
+              className="size-3 rounded-[3px] border border-emerald-500 bg-emerald-500/15"
+              aria-hidden="true"
+            />
+            Đang dạy (giờ đã chốt)
+          </span>
+        )}
         <span className="ml-auto inline-flex items-center gap-2">
           {dirty && (
             <span className="rounded-md bg-amber-500/15 px-2 py-0.5 font-medium text-amber-700">
@@ -215,6 +233,8 @@ export default function SubmissionWindowGrid({
               key={p}
               period={p}
               days={days}
+              slotsPerDay={slotsPerDay}
+              dangDay={dangDay}
               cellOn={cellOn}
               locked={locked}
               onTogglePeriod={togglePeriod}
@@ -264,7 +284,7 @@ export default function SubmissionWindowGrid({
   );
 }
 
-function RowCells({ period, days, cellOn, locked, onTogglePeriod, onToggleCell, onStartDrag, onExtendDrag, lastRow }) {
+function RowCells({ period, days, slotsPerDay, dangDay, cellOn, locked, onTogglePeriod, onToggleCell, onStartDrag, onExtendDrag, lastRow }) {
   return (
     <>
       <button
@@ -282,13 +302,15 @@ function RowCells({ period, days, cellOn, locked, onTogglePeriod, onToggleCell, 
       </button>
       {days.map((d) => {
         const on = cellOn(d.idx, period);
+        const day = dangDay?.has(d.idx * slotsPerDay + period);
         return (
           <div
             key={d.idx}
             role="checkbox"
             tabIndex={locked ? -1 : 0}
             aria-checked={on}
-            aria-label={`${d.label} tiết ${period + 1}`}
+            aria-label={`${d.label} tiết ${period + 1}${day ? " — đang dạy" : ""}`}
+            title={day ? "Đang dạy ở giờ này (lớp đã chốt giờ)" : undefined}
             onPointerDown={(e) => {
               if (locked) return;
               e.preventDefault();
@@ -303,13 +325,21 @@ function RowCells({ period, days, cellOn, locked, onTogglePeriod, onToggleCell, 
             className={cn(
               "flex h-7 touch-none items-center justify-center border-l transition-colors",
               !lastRow && "border-b",
-              on ? "bg-emerald-500 text-white" : "bg-background",
+              on
+                ? "bg-emerald-500 text-white"
+                : day
+                  ? "bg-emerald-500/15 text-emerald-700"
+                  : "bg-background",
               !locked && !on && "hover:bg-emerald-500/20",
               !locked && on && "hover:bg-emerald-600",
               locked && "cursor-default",
             )}
           >
-            {on && <Check className="size-3.5" aria-hidden="true" />}
+            {on ? (
+              <Check className="size-3.5" aria-hidden="true" />
+            ) : day ? (
+              <span className="size-1.5 rounded-full bg-emerald-600" aria-hidden="true" />
+            ) : null}
           </div>
         );
       })}

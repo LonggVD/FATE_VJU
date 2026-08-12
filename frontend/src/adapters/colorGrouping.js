@@ -29,8 +29,6 @@ export function statusKeyOf(lesson) {
   return lesson.teacherType === "GUEST" ? "Thỉnh giảng" : "Cơ hữu";
 }
 
-const FACULTY_RE = /\(([^)]+)\)\s*$/;
-
 export function groupKeyOf(lesson, colorBy) {
   if (colorBy === "status") {
     return statusKeyOf(lesson);
@@ -39,8 +37,10 @@ export function groupKeyOf(lesson, colorBy) {
     return lesson.teacherType === "GUEST" ? "Thỉnh giảng" : "Cơ hữu";
   }
   if (colorBy === "faculty") {
-    const m = FACULTY_RE.exec(lesson.programLabel || "");
-    return m ? m[1] : (lesson.programLabel || "Khác");
+    // Ten Khoa lay thang tu backend (lesson.facultyName). Truoc day boc tu phan
+    // trong ngoac cuoi programLabel - vo khi nhan chuyen sang nguyen van nhu file
+    // ("BCSE+MJM", khong con ngoac) thi moi lop thanh mot nhom mau rieng.
+    return lesson.facultyName || lesson.programLabel || "Khác";
   }
   return lesson.programLabel || "Khác";
 }

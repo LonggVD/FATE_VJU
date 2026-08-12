@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
-import { Download, Eraser, Eye, GraduationCap, Plus, RotateCcw, TriangleAlert, Upload } from "lucide-react";
+import { Download, Eraser, Eye, GraduationCap, Lock, LockOpen, Plus, RotateCcw, TriangleAlert, Upload } from "lucide-react";
 import { useAppData } from "../../context/AppDataContext";
 import SectionEditDrawer from "../manual/SectionEditDrawer";
 import TeacherEditDrawer from "../manual/TeacherEditDrawer";
 import CourseEditDrawer from "../manual/CourseEditDrawer";
 import ImportExcelDialog from "../manual/ImportExcelDialog";
 import ExportExcelDialog from "../manual/ExportExcelDialog";
+import ChotCourseDialog from "../manual/ChotCourseDialog";
 import { FilterSelect } from "@/components/shared/filter-select";
 import { ListSearch } from "@/components/shared/list-search";
 import { Notice } from "@/components/shared/notice";
@@ -20,13 +21,21 @@ const PAGE_STEP = 25;
 const STATUS_META = {
   missing_time: { label: "Thiếu giờ", tone: "red" },
   ready_auto: { label: "Tự động xếp", tone: "amber" },
-  ready_fixed: { label: "Đã chốt giờ", tone: "emerald" },
+  ready_fixed: { label: "Có giờ cố định", tone: "emerald" },
 };
 
 const STATUS_OPTIONS = Object.entries(STATUS_META).map(([value, m]) => ({
   value,
   label: m.label,
 }));
+
+// Loc theo TRANG THAI CHOT cua hoc phan - khac han "Trang thai" o tren (von noi
+// ve gio cua tung lop). Giao vu chot dan tung mon nen phai tra loi duoc ngay
+// "con nhung mon nao chua chot".
+const CHOT_OPTIONS = [
+  { value: "chua", label: "Chưa chốt lịch" },
+  { value: "roi", label: "Đã chốt lịch" },
+];
 
 // Trang thai SAU khi bam "Luu thoi khoa bieu" ben man Thoi khoa bieu (khac
 // STATUS_META o tren - cai do noi ve gio gia dinh/co dinh, khong noi co trung
@@ -54,7 +63,8 @@ function groupByCourse(rows) {
     const key = c.courseId ?? `__none_${c.courseName || c.sectionId}`;
     let g = byKey.get(key);
     if (!g) {
-      g = { courseId: c.courseId, courseCode: c.courseCode, courseName: c.courseName, credits: c.credits, rows: [] };
+      g = { courseId: c.courseId, courseCode: c.courseCode, courseName: c.courseName,
+            credits: c.credits, chot: c.courseChot || null, rows: [] };
       byKey.set(key, g);
       groups.push(g);
     }
@@ -73,7 +83,7 @@ function groupByCourse(rows) {
 // px-3 py-3 cua shadcn Table se lam no phinh gap may lan va mat cong dung. Chi
 // phan khung (thanh loc, trang thai, nut) chuyen sang design system.
 export default function ManualEntryPage({ role }) {
-  const { data, loading, initManual, doClearManualTimes } = useAppData();
+  const { data, loading, initManual, doClearManualTimes, doBoChotCourse } = useAppData();
   const canEdit = role !== "viewer";
 
   // Da BO lenh refreshData() luc mount o day: AppDataProvider nay nap du lieu
@@ -82,7 +92,11 @@ export default function ManualEntryPage({ role }) {
 
   const [search, setSearch] = useState("");
   const [programFilter, setProgramFilter] = useState("");
+  const [cohortFilter, setCohortFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [chotFilter, setChotFilter] = useState("");
+  // Nhom hoc phan dang mo hop thoai chot (null = dong).
+  const [chotGroup, setChotGroup] = useState(null);
   const [limit, setLimit] = useState(PAGE_STEP);
   // { type: "section"|"teacher"|"course", id: number|"new" } | null (dong) - moi
   // domain co 1 form rieng (SectionEditDrawer/TeacherEditDrawer/CourseEditDrawer),
@@ -94,23 +108,61 @@ export default function ManualEntryPage({ role }) {
   const isManualMode = data?.sourceLabel === "Nhập liệu thủ công";
   const classes = data?.classes || [];
 
+  // O GHEP ("BCSE+MJM", "VJU2023+VJU2024") = lop cua CA HAI -> danh sach chon la
+  // cac ma DON (backend tach san o programParts/cohortParts). Nho vay chon "BCSE"
+  // ra ca lop "BCSE+MJM", va het canh "VJU2023+VJU2024" voi "VJU2024+VJU2023"
+  // nam thanh hai muc gan giong nhau trong danh sach.
   const programs = useMemo(
-    () => [...new Set(classes.map((c) => c.programLabel).filter(Boolean))].sort(),
+    () => [...new Set(classes.flatMap((c) => c.programParts ?? []))].sort(),
+    [classes],
+  );
+
+  // Khoa (cot "Khóa", vd VJU2026) - lay tu chinh du lieu dang co, khong chot cung
+  // danh sach: moi ky file lai co khoa moi. Sap giam dan de khoa moi nhat len dau.
+  const cohorts = useMemo(
+    () => [...new Set(classes.flatMap((c) => c.cohortParts ?? []))].sort().reverse(),
     [classes],
   );
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return classes.filter((c) => {
-      if (programFilter && c.programLabel !== programFilter) return false;
+      if (programFilter && !(c.programParts ?? []).includes(programFilter)) return false;
+      if (cohortFilter && !(c.cohortParts ?? []).includes(cohortFilter)) return false;
       if (statusFilter && c.status !== statusFilter) return false;
+      if (chotFilter === "roi" && !c.courseChot) return false;
+      if (chotFilter === "chua" && c.courseChot) return false;
       if (!q) return true;
       return [c.courseName, c.classCode, c.teacherName, String(c.sectionId)]
         .some((v) => (v || "").toLowerCase().includes(q));
     });
-  }, [classes, search, programFilter, statusFilter]);
+  }, [classes, search, programFilter, cohortFilter, statusFilter, chotFilter]);
   const shown = visible.slice(0, limit);
   const courseGroups = useMemo(() => groupByCourse(shown), [shown]);
+
+  const tienDoChot = useMemo(() => {
+    const m = new Map();
+    for (const c of classes) {
+      if (c.courseId == null) continue;
+      if (!m.has(c.courseId)) m.set(c.courseId, Boolean(c.courseChot));
+    }
+    const tong = m.size;
+    const roi = [...m.values()].filter(Boolean).length;
+    return { tong, roi, con: tong - roi };
+  }, [classes]);
+
+  const handleBoChot = (g) => async (e) => {
+    e.stopPropagation();
+    const ok = window.confirm(
+      `Bỏ chốt học phần "${g.courseName}"?
+
+` +
+      `Giờ của ${g.rows.length} lớp sẽ trả về đúng trạng thái TRƯỚC khi chốt ` +
+      `(lớp vốn chưa có giờ quay lại "để hệ thống tự xếp"), và hệ thống được xếp lại môn này.`,
+    );
+    if (!ok) return;
+    await doBoChotCourse(g.courseId);
+  };
 
   const handleStart = async () => {
     if (data && (data.numSections > 0 || data.numTeachers > 0)) {
@@ -198,11 +250,44 @@ export default function ManualEntryPage({ role }) {
             onChange={(v) => setProgramFilter(v ?? "")}
           />
           <FilterSelect
+            label="Mọi khoá"
+            searchable
+            value={cohortFilter || null}
+            options={cohorts}
+            onChange={(v) => setCohortFilter(v ?? "")}
+          />
+          <FilterSelect
             label="Mọi trạng thái"
             value={statusFilter || null}
             options={STATUS_OPTIONS}
             onChange={(v) => setStatusFilter(v ?? "")}
           />
+          <FilterSelect
+            label="Mọi tình trạng chốt lịch"
+            value={chotFilter || null}
+            options={CHOT_OPTIONS}
+            onChange={(v) => setChotFilter(v ?? "")}
+          />
+          {/* Tien do tinh tren CA KY, khong theo bo loc dang hien: cau hoi that
+              su la "con bao nhieu mon chua chot", khong phai "trong man nay". */}
+          {tienDoChot.tong > 0 && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs"
+              title={`${tienDoChot.roi} học phần đã chốt lịch, còn ${tienDoChot.con} chưa chốt. Bấm để lọc.`}
+              onClick={() => setChotFilter(chotFilter === "chua" ? "" : "chua")}
+            >
+              <Lock className="size-3.5" />
+              Chốt lịch{" "}
+              <strong className="tabular-nums">
+                {tienDoChot.roi}/{tienDoChot.tong}
+              </strong>{" "}
+              môn
+              {tienDoChot.con > 0 && (
+                <span className="text-amber-700">· còn {tienDoChot.con}</span>
+              )}
+            </button>
+          )}
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
             {canEdit && isManualMode && (
@@ -310,6 +395,7 @@ export default function ManualEntryPage({ role }) {
                 <th rowSpan={3} className="xls-z-course">Mã học phần</th>
                 <th rowSpan={3} className="xls-z-course">Tên học phần</th>
                 <th rowSpan={3} className="xls-z-course">Số tín chỉ</th>
+                <th rowSpan={3} className="xls-z-course">Chốt lịch</th>
                 <th rowSpan={3}>Mã lớp học phần</th>
                 <th colSpan={2}>Phân bổ TC</th>
                 <th rowSpan={3}>Khóa</th>
@@ -366,6 +452,54 @@ export default function ManualEntryPage({ role }) {
                     {i === 0 && <td className="xls-course xls-z-course" rowSpan={g.rows.length} onClick={openCourse(g.courseId)}>{g.courseCode || "—"}</td>}
                     {i === 0 && <td className="xls-course xls-z-course" rowSpan={g.rows.length} onClick={openCourse(g.courseId)}>{g.courseName || "—"}</td>}
                     {i === 0 && <td className="xls-course xls-z-course" rowSpan={g.rows.length} onClick={openCourse(g.courseId)}>{g.credits ?? "—"}</td>}
+                    {/* CHOT LICH theo HOC PHAN: o merge xuong ca nhom, dung
+                        nhu Ma/Ten hoc phan - vi chot ap cho MOI lop cua mon,
+                        khong phai cho dong dang tro. */}
+                    {i === 0 && (
+                      <td
+                        className="xls-course xls-z-course xls-chot"
+                        rowSpan={g.rows.length}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {g.chot ? (
+                          <div className="xls-chot-box">
+                            <span className="xls-chot-badge" title={
+                              `Đã chốt bởi ${g.chot.by} lúc ${(g.chot.at || "").replace("T", " ")}` +
+                              (g.chot.note ? ` — ${g.chot.note}` : "")
+                            }>
+                              <Lock className="size-3" />
+                              {/* Chot TU FILE (moi lop deu co gio da thong nhat
+                                  san - quy tac A2) khac chot TAY: giao vu can
+                                  biet mon nao minh da thuc su ra soat. */}
+                              {g.chot.tuFile ? "Chốt theo file" : "Đã chốt"}
+                            </span>
+                            <span className="xls-chot-meta">
+                              {g.chot.by} · {(g.chot.at || "").slice(5, 10).split("-").reverse().join("/")}
+                            </span>
+                            {g.chot.note && <span className="xls-chot-note">{g.chot.note}</span>}
+                            {canEdit && (
+                              <button type="button" className="xls-chot-btn" onClick={handleBoChot(g)} disabled={loading}>
+                                <LockOpen className="size-3" />
+                                Bỏ chốt
+                              </button>
+                            )}
+                          </div>
+                        ) : canEdit && g.courseId != null ? (
+                          <button
+                            type="button"
+                            className="xls-chot-btn"
+                            disabled={loading}
+                            onClick={() => setChotGroup(g)}
+                            title="Ghi giờ đang hiển thị của mọi lớp trong học phần này thành giờ chính thức và ghim cứng"
+                          >
+                            <Lock className="size-3" />
+                            Chốt lịch
+                          </button>
+                        ) : (
+                          <span className="xls-chot-meta">chưa chốt</span>
+                        )}
+                      </td>
+                    )}
                     <td>{c.classCode || "—"}</td>
                     <td>{c.ltCredits ?? "—"}</td>
                     <td>{c.thCredits ?? "—"}</td>
@@ -377,11 +511,37 @@ export default function ManualEntryPage({ role }) {
                     <td>{c.periodEnd ?? "—"}</td>
                     <td className="xls-ref">{c.prevTeacherName || "—"}</td>
                     <td className="xls-ref">{c.prevTeacherOrg || "—"}</td>
-                    <td className="xls-z-teacher" onClick={openTeacher(c.teacherId)}>{c.teacherTitle || "—"}</td>
-                    <td className="xls-z-teacher" onClick={openTeacher(c.teacherId)}>{c.teacherNameRaw || c.teacherName}</td>
-                    <td className="xls-z-teacher" onClick={openTeacher(c.teacherId)}>{c.teacherOrg || "—"}</td>
-                    <td className="xls-z-teacher" onClick={openTeacher(c.teacherId)}>{c.teacherEmail || "—"}</td>
-                    <td className="xls-z-teacher" onClick={openTeacher(c.teacherId)}>{c.teacherPhone || "—"}</td>
+                    {/* MOI GIANG VIEN MOT DONG trong o - dung nhu file Excel goc
+                        ghi ca nhom trong mot o. Truoc day chi hien nguoi dau nen
+                        email/SDT cua nhung nguoi con lai khong doc duoc o dau, va
+                        khong bam vao ho de khai gio duoc. Bam vao TUNG dong -> mo
+                        ngan sua CHINH nguoi do (co muc "Gio co the day"). */}
+                    {["title", "name", "org", "email", "phone"].map((truong) => (
+                      <td key={truong} className="xls-z-teacher xls-gv-cell">
+                        {(c.teachers?.length ? c.teachers : [null]).map((t, k) => (
+                          <button
+                            type="button"
+                            key={t ? t.id : k}
+                            // Gio da chot cua lop nam NGOAI khung nguoi do da khai:
+                            // he thong CO Y khong doi gio da chot, nhung phai thay
+                            // duoc cho venh nay chu khong de giao vu tu doan.
+                            className={
+                              "xls-gv-line" + (t?.outsideDeclared ? " xls-gv-venh" : "")
+                            }
+                            title={
+                              t
+                                ? t.outsideDeclared
+                                  ? `${t.name} — giờ đã chốt của lớp này NGOÀI khung giờ ${t.name} đã khai. Hệ thống giữ nguyên giờ đã chốt; sửa giờ lớp hoặc khung giờ đã khai nếu cần.`
+                                  : `${t.name} — bấm để sửa / khai giờ có thể dạy`
+                                : undefined
+                            }
+                            onClick={t ? openTeacher(t.id) : undefined}
+                          >
+                            {(truong === "name" ? t?.name : t?.[truong]) || "—"}
+                          </button>
+                        ))}
+                      </td>
+                    ))}
                     <td>{c.teachingHoursLt ?? "—"}</td>
                     <td>{c.teachingHoursTh ?? "—"}</td>
                     <td>{c.location || "—"}</td>
@@ -431,6 +591,9 @@ export default function ManualEntryPage({ role }) {
           section={selectedSection}
           onClose={() => setDrawer(null)}
           onDuplicated={(newId) => setDrawer({ type: "section", id: newId })}
+          // Bam "Giờ dạy" canh mot giang vien trong lop -> chuyen sang ngan cua
+          // chinh nguoi do (co muc khai gio co the day).
+          onOpenTeacher={(id) => setDrawer({ type: "teacher", id })}
         />
       )}
       {drawer?.type === "teacher" && (
@@ -449,6 +612,13 @@ export default function ManualEntryPage({ role }) {
 
       <ImportExcelDialog open={importOpen} onOpenChange={setImportOpen} />
       <ExportExcelDialog open={exportOpen} onOpenChange={setExportOpen} />
+      {chotGroup && (
+        <ChotCourseDialog
+          open
+          group={chotGroup}
+          onOpenChange={(o) => !o && setChotGroup(null)}
+        />
+      )}
     </div>
   );
 }

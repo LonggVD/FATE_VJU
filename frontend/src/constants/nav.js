@@ -17,6 +17,9 @@
 
 import {
   BookOpen,
+  GraduationCap,
+  UserCheck,
+  Users,
   CalendarClock,
   CalendarDays,
   ClipboardList,
@@ -70,6 +73,22 @@ export const NAV_GROUPS = [
     label: 'Dữ liệu học phần',
     icon: BookOpen,
     children: [],
+  },
+  // Giang vien la mot THUC THE rieng, khong phai mot buoc trong quy trinh: mot
+  // nguoi day nhieu lop, sua o day anh huong moi lop cua ho. Truoc day chi sua
+  // duoc qua ngan keo mo tu bang lop, va man "Gio ranh GV" chi hien THINH GIANG
+  // - khong co cho nao nhin thay toan bo giang vien co huu.
+  //
+  // Hai muc con = hai LOAI, vi hai loai duoc xep lich o hai giai doan khac nhau
+  // va thong tin can nhin cung khac (xem TeachersPage).
+  {
+    key: 'teachers',
+    label: 'Giảng viên',
+    icon: Users,
+    children: [
+      { key: 'resident', label: 'Cơ hữu', icon: UserCheck },
+      { key: 'guest', label: 'Thỉnh giảng', icon: GraduationCap },
+    ],
   },
   {
     key: 'data',

@@ -21,13 +21,23 @@ export const initManual = () => apiPost("/api/manual/init");
 // Nap file ke hoach giang day cu vao form. HAI BUOC: xem truoc (khong ghi gi,
 // chi doc file va bao se ra cai gi) roi moi commit (ghi de toan bo du lieu).
 export const importPreview = (file) => apiUpload("/api/manual/import/preview", file);
-// "Buoc 1: chuan hoa du lieu" - doi nguon gio (text/structured) cho 1 dong dang
-// xem truoc, TRUOC khi nap chinh thuc (importCommit = buoc 2).
-export const importFixTimeRow = (excelRow, source) =>
-  apiPost("/api/manual/import/apply-time-fix", { excelRow, source });
-export const importCommit = () => apiPost("/api/manual/import/commit");
+// mode: "replace" (xoa het roi nap) | "merge" (gop them vao du lieu dang co)
+export const importCommit = (mode = "replace") =>
+  apiPost("/api/manual/import/commit", { mode });
+// DANH SACH GV CO HUU cua truong - nguon CHINH THUC de phan loai co huu/thinh
+// giang. Cung 2 buoc nhu nhap file ke hoach: nap no co the doi loai nhieu GV,
+// keo theo lop chuyen giai doan xep lich.
+export const lecturersPreview = (file) => apiUpload("/api/manual/lecturers/preview", file);
+export const lecturersCommit = () => apiPost("/api/manual/lecturers/commit");
+export const lecturersClear = () => apiDelete("/api/manual/lecturers");
+export const getLecturers = () => apiGet("/api/manual/lecturers");
 export const addManualTeacher = (payload) => apiPost("/api/manual/teacher", payload);
 export const updateManualTeacher = (teacherId, payload) => apiPatch(`/api/manual/teacher/${teacherId}`, payload);
+// CHOT LICH cho ca mot hoc phan: ghi gio dang hien tren luoi thanh gio chinh
+// thuc VA ghim lai - giai lai khong dich duoc nua, sua tay/keo-tha bi chan.
+export const chotCourse = (courseId, payload) =>
+  apiPost(`/api/manual/course/${courseId}/chot`, payload);
+export const boChotCourse = (courseId) => apiDelete(`/api/manual/course/${courseId}/chot`);
 export const addManualCourse = (payload) => apiPost("/api/manual/course", payload);
 export const updateManualCourse = (courseId, payload) => apiPatch(`/api/manual/course/${courseId}`, payload);
 export const addManualSection = (payload) => apiPost("/api/manual/section", payload);

@@ -77,8 +77,18 @@ export function analyzeUnplaced(guestResult, data) {
     const windows = windowSlots.map((w) => {
       // classCode gan them vao TUNG buoi chan (khong chi buoi #u.id) - de UI
       // hien "trung voi CSE3056 (#263)" thay vi trung so #263 kho hieu.
+      // Chan cho tinh theo CA NHOM dong giang day: lop 5 nguoi day thi ai trong
+      // nhom dang day cho khac cung gio cung la thu pham. Chi soi GV chinh thi
+      // giao vu doc "khong xep duoc" ma khong thay ai dang chan.
+      const tidsCuaLop = u.teacherIds?.length ? u.teacherIds : [u.teacherId];
       const teacherBlockers = placed
-        .filter((l) => l.teacherId === u.teacherId && overlaps(w, duration, l.slot, l.duration))
+        .filter((l) => {
+          const tidsCuaBuoi = l.teacherIds?.length ? l.teacherIds : [l.teacherId];
+          return (
+            tidsCuaBuoi.some((t) => tidsCuaLop.includes(t)) &&
+            overlaps(w, duration, l.slot, l.duration)
+          );
+        })
         .map((l) => ({ ...l, classCode: classCodeById.get(l.id) || null }));
       const sameRoomCount = placed.filter(
         (l) => l.roomType === u.roomType && overlaps(w, duration, l.slot, l.duration),

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Calendar, Check, CircleCheck, X } from "lucide-react";
+import { Calendar, Check, CircleCheck, Filter, X } from "lucide-react";
 import { PROBLEM_META, PROBLEM_TYPE } from "../../adapters/problemInbox";
 import { REASON_META, UNPLACED_REASON } from "../../adapters/unplacedAnalysis";
 import { TONE_CLASS, TONE_DOT } from "@/components/shared/pill";
@@ -92,12 +92,18 @@ export default function ProblemInbox({ inbox, activeId, onPick, onClear, onPlace
   if (!inbox || (inbox.total === 0 && unplacedItems.length === 0)) {
     return (
       <Shell>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <span className="text-sm font-semibold">Hộp thư vấn đề</span>
+          {inbox?.daLoc && (
+            <span className="text-muted-foreground inline-flex items-center gap-1 text-[11px]">
+              <Filter className="size-3" />
+              trong phạm vi đang lọc
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2.5 text-sm text-emerald-700">
           <CircleCheck className="size-4 shrink-0" />
-          Không có vấn đề nào
+          {inbox?.daLoc ? "Phạm vi đang lọc không có vấn đề nào" : "Không có vấn đề nào"}
         </div>
       </Shell>
     );
@@ -129,6 +135,14 @@ export default function ProblemInbox({ inbox, activeId, onPick, onClear, onPlace
     <Shell>
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-semibold">Hộp thư vấn đề</span>
+        {/* Noi ro hop thu dang theo bo loc: neu khong, thay "3 van de" trong khi
+            ky nay co 33 thi nguoi dung tuong da xu ly gan het. */}
+        {inbox?.daLoc && (
+          <span className="text-muted-foreground inline-flex items-center gap-1 text-[11px]">
+            <Filter className="size-3" />
+            trong phạm vi đang lọc
+          </span>
+        )}
       </div>
 
       <div className="bg-muted flex items-center gap-1 rounded-lg p-1">
@@ -186,10 +200,13 @@ export default function ProblemInbox({ inbox, activeId, onPick, onClear, onPlace
               <div className="space-y-1">
                 {g.items.map((it) => {
                   const on = activeId === it.id;
+                  // Nhom trung lap co the gom 3+ dong (xem problemInbox muc 1c),
+                  // khong chi 2 - so do "tranh mot cho" van dung, chi la nhieu
+                  // dong hon.
                   const isPair =
                     (it.type === PROBLEM_TYPE.CLASH ||
                       it.type === PROBLEM_TYPE.DUPLICATE) &&
-                    it.sections?.length === 2;
+                    it.sections?.length >= 2;
 
                   return (
                     <div
@@ -225,7 +242,10 @@ export default function ProblemInbox({ inbox, activeId, onPick, onClear, onPlace
                             // So do "hai buoi tranh mot cho" - giu tu man Giai doan 1 cu.
                             <div className="bg-background space-y-1 rounded-md border p-2">
                               <div className="text-muted-foreground text-[11px]">
-                                {it.when} — chỉ chứa được 1 buổi
+                                {it.when} —{" "}
+                                {it.soDongTrung
+                                  ? `${it.soDongTrung} dòng cùng một chỗ`
+                                  : "chỉ chứa được 1 buổi"}
                               </div>
                               {it.sections.map((s) => {
                                 const dropped = it.unplacedIds?.includes(

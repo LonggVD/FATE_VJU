@@ -3,14 +3,20 @@
 Chay: py app.py   -> mo http://127.0.0.1:5055
 """
 
+import contextlib
+import datetime
 import json
 import os
+import pathlib
 import re
+from collections import Counter
 
-from flask import Flask, request, jsonify, render_template, send_file
+from flask import Flask, request, jsonify, render_template, send_file, send_from_directory
 
+import fate_audit
 import fate_export
 import fate_import
+import fate_lecturers
 import scheduler_core as sc
 
 app = Flask(__name__)
@@ -42,15 +48,66 @@ STATE = {
     # "Ghim" tu keo-tha sua tay (thay cho tinh nang "Tu choi - luan chuyen" cu).
     # KHAC voi ket qua giai (guestResult/residentResult): overrides KHONG bi xoa
     # khi giai lai - no la RANG BUOC duoc doc lai o moi lan giai (xem
-    # _solve_guest_with_overrides/_forbidden_from_resident_overrides), chi mat
+    # _solve_guest_with_overrides/_ghim_tay_o_giai_doan_2), chi mat
     # khi sinh/nap du lieu moi (section id khong con nghia) hoac giao vu tu bo ghim.
     "overrides": {},
+    # section_id(int) da bam "Bo ghim" o man TKB = "CHO HE THONG XEP LAI lop nay".
+    #
+    # Vi sao khong chi xoa khoi overrides: gio doc tu file duoc ghim o HAI cho doc
+    # lap - overrides (de UI hien "da ghim") VA chinh solver (`original_slot` /
+    # `submissions=[slot]`). Xoa moi overrides thi lan giai sau van ra dung o cu,
+    # tuc nut "Bo ghim" khong lam gi ca. Tap nay la cho ghi "giao vu da noi ro y
+    # minh", de ca hai duong ghim cung nhin vao.
+    "bo_ghim": set(),
+    # DANH SACH GIANG VIEN CO HUU cua truong (nap qua /api/manual/lecturers) -
+    # NGUON CHINH THUC de phan loai co huu/thinh giang, thay cho viec do chu
+    # "Viet Nhat" trong o "Don vi cong tac" cua file ke hoach giang day (o do
+    # giao vu go tay moi ky nen bo trong / ghi moi kieu / mot o cho ca nhom).
+    # {"byKey": {khoa_ten: {name, gender, faculty, note}}, "fileName", "count"}
+    # None = chua nap -> quay ve luat cu theo o don vi.
+    "co_huu": None,
+    # Ban vua doc tu file, CHUA ap dung (buoc xem truoc) - xem
+    # api_manual_lecturers_preview.
+    "co_huu_pending": None,
 }
+
+
+# Giao dien MOI (React + Vite) nam o ../frontend, build ra ../frontend/dist.
+# templates/index.html la ban CU: khong co man "Nhap tu Excel"/"Kiem tra du lieu"/
+# "Xac nhan gio hoc" nao ca. Truoc day chay `py app.py` roi mo :5055 thi ra ban cu,
+# nen ai khong biet phai chay them Vite se khong thay nhung man do o dau.
+#
+# Uu tien ban da build; chua build thi ve ban cu va noi ro o /legacy.
+_DIST = pathlib.Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+
+def _da_build():
+    return (_DIST / "index.html").is_file()
 
 
 @app.get("/")
 def index():
+    if _da_build():
+        return send_from_directory(_DIST, "index.html")
     return render_template("index.html", default_params=DEFAULT_PARAMS)
+
+
+@app.get("/legacy")
+def index_legacy():
+    """Ban giao dien cu (mot file, JS inline) - giu lai de doi chieu."""
+    return render_template("index.html", default_params=DEFAULT_PARAMS)
+
+
+@app.get("/assets/<path:ten>")
+def dist_assets(ten):
+    """File js/css da build (ten co ma bam, doi moi lan build)."""
+    return send_from_directory(_DIST / "assets", ten)
+
+
+@app.get("/favicon.svg")
+@app.get("/icons.svg")
+def dist_icons():
+    return send_from_directory(_DIST, request.path.lstrip("/"))
 
 
 _DAY_LABELS_VN = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"]
@@ -76,6 +133,38 @@ def _build_classes_list(data):
     for sid, s in data["sections"].items():
         course = data.get("courses", {}).get(s.get("course_id")) or {}
         teacher = data["teachers"].get(s["teacher_id"], {})
+        # MOI giang vien cua lop, VAI TRO NGANG NHAU (khong co "GV chinh" -
+        # teacher_ids[0] chi la nguoi dau danh sach). Bang mirror hien tung nguoi
+        # MOT DONG trong o giang vien, dung nhu file Excel goc, de doc duoc email/
+        # SDT cua TUNG nguoi va bam vao tung nguoi de khai gio.
+        tids = [t for t in (s.get("teacher_ids") or [s["teacher_id"]]) if t in data["teachers"]]
+
+        # Lop DA CHOT GIO nhung gio do nam NGOAI khung ranh nguoi ta vua khai.
+        # Thu tu uu tien da chot: gio chot trong file KHONG bi doi, nen he thong
+        # giu nguyen - nhung phai noi ra, khong thi giao vu khai gio xong thay lop
+        # van nam cho khac va khong hieu vi sao.
+        def _ngoai_khung(tid):
+            khung = set(data.get("manual_teacher_windows", {}).get(tid) or [])
+            if not khung or s.get("time_assumed") or s.get("original_slot") is None:
+                return False
+            return any(s["original_slot"] + k not in khung for k in range(s["duration"]))
+
+        gv_cua_lop = [
+            {
+                "id": t, "name": data["teachers"][t].get("name"),
+                # Gio da chot cua lop nay khong nam trong khung nguoi do da khai.
+                "outsideDeclared": _ngoai_khung(t),
+                "title": data["teachers"][t].get("title") or "",
+                "org": data["teachers"][t].get("org") or "",
+                "email": data["teachers"][t].get("email") or "",
+                "phone": data["teachers"][t].get("phone") or "",
+                "type": data["teachers"][t].get("type"),
+                "isPlaceholder": bool(data["teachers"][t].get("placeholder")),
+                "availabilitySlots": len(
+                    data.get("manual_teacher_windows", {}).get(t) or []),
+            }
+            for t in tids
+        ]
 
         # Lop tu Excel/gia lap khong co day/period_start/period_end (chi co
         # original_slot) - suy ra tu original_slot de bang van hien duoc gio
@@ -106,18 +195,38 @@ def _build_classes_list(data):
 
         out.append({
             "sectionId": sid,
+            # CHOT LICH theo HOC PHAN: moi lop cua mon deu mang theo trang thai
+            # nay de bang co the to mau/khoa nut ma khong phai tra cuu cheo.
+            "courseChot": course.get("chot") and {
+                k: v for k, v in course["chot"].items() if k != "truoc"},
             "courseId": s.get("course_id"), "courseCode": course.get("code"),
             "courseName": course.get("name") or s.get("course_name"), "credits": course.get("credits"),
             "classCode": s.get("class_code"), "ltCredits": s.get("lt_credits"), "thCredits": s.get("th_credits"),
             "cohort": s.get("cohort"), "program": s["program"],
-            "programName": data.get("program_names_reverse", {}).get(s["program"]),
-            "programLabel": sc.program_label(s["program"], data["program_faculty"], data["faculty_names"], data.get("program_names_reverse")),
+            # Hien thi NGUYEN VAN nhu file ("BCSE+MJM"); ben trong lop thuoc CA HAI
+            # chuong trinh (programIds) - xem _program_ids_cua_lop.
+            "programName": (s.get("program_raw")
+                            or data.get("program_names_reverse", {}).get(s["program"])),
+            "programLabel": sc.section_program_label(data, s),
+            "programIds": sc.section_program_ids(s),
+            "facultyName": sc.section_faculty_name(data, s),
+            "coordinators": sc.section_coordinators(data, s),
+            # O ghi GHEP ("BCSE+MJM", "VJU2023+VJU2024") = lop cua CA HAI - tach
+            # san de bo loc tinh dung. CTDT lay thang ten cua tung program_id (da
+            # tach luc tao lop), khoa thi tach tai day - xem _tach_phan().
+            "programParts": sc.section_program_names(data, s),
+            "cohortParts": _tach_phan(s.get("cohort"), _KHOA_SPLIT_RE),
             "expectedStudents": s.get("expected_students"),
             "day": day, "periodStart": p_start, "periodEnd": p_end,
             "timeAssumed": time_assumed, "timeLabel": time_label,
             # Gio dang hien la do giao vu keo-tha dat, khong phai gio goc trong
             # du lieu - de man hinh noi ro thay vi im lang doi mot con so.
             "timeFromOverride": bool(ov and ov.get("slot") is not None),
+            # DANH SACH giang vien cua lop - nguon duy nhat cho bang mirror va form
+            # sua lop. Cac truong teacher* so it ben duoi la NGUOI DAU danh sach,
+            # giu lai cho cac man chi can 1 ten (luoi TKB, tra cuu theo GV).
+            "teachers": gv_cua_lop,
+            "teacherIds": tids,
             "teacherId": s["teacher_id"], "teacherName": sc.teacher_display(data, s["teacher_id"]),
             "teacherNameRaw": teacher.get("name"),  # khong co hau to "(GV#n)" - dung cho bang mirror Excel
             "teacherType": s["teacher_type"], "teacherOrg": teacher.get("org"), "teacherTitle": teacher.get("title"),
@@ -142,11 +251,28 @@ def _build_data_response(data, extra=None):
     """Dung chung cho ca sinh du lieu gia lap va nap du lieu that - cung cau truc
     'data' (xem generate_data/load_real_fate_data) nen tai dung duoc toan bo."""
     params = data["params"]
-    prog_names_rev = data.get("program_names_reverse")
 
     multi_program_count = sum(1 for t in data["teachers"].values() if "second_program" in t)
 
     manual_windows = data.get("manual_teacher_windows", {})
+
+    # Cac o gio moi GV DANG THUC SU DAY, suy tu cac lop DA CHOT GIO. Khac han
+    # "availabilitySlots" (gio GV/giao vu KHAI):
+    #   - dang day  = BANG CHUNG nguoi do day duoc luc do (lop da chot gio, GV va
+    #     dieu phoi vien da thong nhat) -> phai hien ra o luoi "Gio co the day",
+    #     neu khong thi nap file xong luoi trong tron, nhin nhu chua biet gi.
+    #   - da khai   = GIOI HAN CUNG khi xep cac lop CHUA co gio (xem
+    #     _apply_section_time). Nhap gio dang day vao day thi cac lop chua co gio
+    #     cua ho chi con duoc xep dung vao nhung o DA BI CHIEM -> khong xep duoc.
+    # Nen hai thu di RIENG, luoi hien hai mau khac nhau.
+    dang_day = {}
+    for s in data["sections"].values():
+        if s.get("time_assumed") or s.get("original_slot") is None:
+            continue
+        o = list(range(s["original_slot"], s["original_slot"] + s["duration"]))
+        for tid in (s.get("teacher_ids") or [s["teacher_id"]]):
+            dang_day.setdefault(tid, set()).update(o)
+
     teachers = [
         {
             "id": t["id"], "name": sc.teacher_display(data, t["id"]), "type": t["type"],
@@ -156,9 +282,17 @@ def _build_data_response(data, extra=None):
             "nameRaw": t.get("name"), "title": t.get("title"), "email": t.get("email"), "phone": t.get("phone"),
             "availabilitySlots": sorted(manual_windows.get(t["id"], [])),
             "availabilityWindows": [sc.slot_label(s, params["slotsPerDay"]) for s in sorted(manual_windows.get(t["id"], []))],
+            # O gio nguoi nay DANG DAY theo cac lop da chot gio (xem dang_day o
+            # tren) - de hien tren luoi "Gio co the day" nhu bang chung, khong
+            # phai gio da khai.
+            "teachingSlots": sorted(dang_day.get(t["id"], [])),
             # True = cho trong cho lop CHUA phan cong giang vien (nap tu Excel),
             # khong phai mot con nguoi. Cac man danh cho GV that loc bang co nay.
             "isPlaceholder": bool(t.get("placeholder")),
+            # None = chua nap danh sach co huu (dang doan theo o "Don vi cong
+            # tac"); True/False = co/khong co ten trong danh sach chinh thuc.
+            "inLecturerList": (None if t.get("placeholder")
+                               else _co_huu_theo_danh_sach(t.get("name"))),
         }
         for t in sorted(data["teachers"].values(), key=lambda t: t["id"])
     ]
@@ -169,6 +303,10 @@ def _build_data_response(data, extra=None):
         submissions.append({
             "sectionId": sid,
             "teacherId": s["teacher_id"],
+            # TAT CA GV cua lop (dong giang day) - cac man kiem trung phai gom theo
+            # tung nguoi, khong chi GV chinh (xem problemInbox.scanTeacherClashes,
+            # unplacedAnalysis). Thieu field nay thi nguoi thu 2 tro di vo hinh.
+            "teacherIds": list(s.get("teacher_ids") or [s["teacher_id"]]),
             "teacherName": sc.teacher_display(data, s["teacher_id"]),
             # teacherType + duration: man hinh "Khung gio da bao" phai phan biet
             # lop THINH GIANG (dieu phoi vien nop gio) voi lop CO HUU (Giai doan 2
@@ -178,14 +316,23 @@ def _build_data_response(data, extra=None):
             "duration": s["duration"],
             "courseName": s.get("course_name"),
             "program": s["program"],
-            "programLabel": sc.program_label(s["program"], data["program_faculty"], data["faculty_names"], prog_names_rev),
-            "coordinator": data["coordinator_names"][s["program"]],
+            "programLabel": sc.section_program_label(data, s),
+            "programParts": sc.section_program_names(data, s),
+            "coordinator": ", ".join(sc.section_coordinators(data, s)),
+            "coordinators": sc.section_coordinators(data, s),
             "facultyId": data["program_faculty"][s["program"]],
             "facultyName": data["faculty_names"][data["program_faculty"][s["program"]]],
             "roomType": s["room_type"],
             "windowSlots": windows,
             "windowLabels": [sc.slot_label(w, params["slotsPerDay"]) for w in windows],
             "isSingleFixedWindow": len(windows) == 1,
+            # CHUA ai khai gio ranh, he thong dang tam coi la ranh ca tuan (xem
+            # _apply_section_time). Phai gui co nay chu khong de frontend TU DOAN
+            # bang cach dem so khung: nguong cu (>=90% so o cua ca tuan) tinh
+            # weekTotal theo 7 ngay, con khung "ca tuan" cua thinh giang chi co 6
+            # ngay (khong ai day Chu nhat) -> 72/84 = 86% < 90% -> bi xep nham la
+            # "Da chot gio", tuc man hinh noi nguoc han su thuc.
+            "availabilityAssumed": bool(s.get("availability_assumed")),
         })
     submissions.sort(key=lambda x: (x["teacherId"], x["sectionId"]))
 
@@ -205,11 +352,17 @@ def _build_data_response(data, extra=None):
         pending_sections.append({
             "sectionId": sid,
             "teacherId": s["teacher_id"],
+            # TAT CA GV cua lop (dong giang day) - cac man kiem trung phai gom theo
+            # tung nguoi, khong chi GV chinh (xem problemInbox.scanTeacherClashes,
+            # unplacedAnalysis). Thieu field nay thi nguoi thu 2 tro di vo hinh.
+            "teacherIds": list(s.get("teacher_ids") or [s["teacher_id"]]),
             "teacherName": sc.teacher_display(data, s["teacher_id"]),
             "courseName": s.get("course_name"),
             "program": s["program"],
-            "programLabel": sc.program_label(s["program"], data["program_faculty"], data["faculty_names"], prog_names_rev),
-            "coordinator": data["coordinator_names"][s["program"]],
+            "programLabel": sc.section_program_label(data, s),
+            "programParts": sc.section_program_names(data, s),
+            "coordinator": ", ".join(sc.section_coordinators(data, s)),
+            "coordinators": sc.section_coordinators(data, s),
             "roomType": s["room_type"],
         })
     pending_sections.sort(key=lambda x: (x["program"], x["teacherId"]))
@@ -217,7 +370,10 @@ def _build_data_response(data, extra=None):
     faculty_stats = []
     for f_id, f_name in enumerate(data["faculty_names"]):
         progs = [p for p, fid in data["program_faculty"].items() if fid == f_id]
-        secs = [s for s in data["sections"].values() if s["program"] in progs]
+        # Lop thuoc nhieu CTDT ("BCSE+MJM") duoc tinh cho MOI chuong trinh no
+        # thuoc - dung y nghia "lop cua ca hai".
+        secs = [s for s in data["sections"].values()
+                if any(pid in progs for pid in sc.section_program_ids(s))]
         faculty_stats.append({
             "facultyId": f_id, "facultyName": f_name,
             "numPrograms": len(progs),
@@ -249,6 +405,9 @@ def _build_data_response(data, extra=None):
         "isRealData": bool(extra and extra.get("isRealData")),
         "sourceLabel": (extra or {}).get("sourceLabel"),
         "numTimeAssumed": (extra or {}).get("numTimeAssumed", 0),
+        # So lop dang xep bang gia dinh "GV chua khai gio ranh nen coi nhu ranh ca
+        # tuan" - de man hinh noi ro day KHONG phai gio GV da xac nhan.
+        "numAvailabilityAssumed": data.get("num_availability_assumed", 0),
         # Ten file Excel da nap (neu du lieu den tu /api/manual/import/commit).
         # sourceLabel van phai la "Nhap lieu thu cong" de form cho sua, nen nguon
         # goc phai di rieng o day - khong thi giao vu khong con biet dang lam
@@ -287,9 +446,14 @@ def _detect_move_conflict(data, section_id, slot):
         if res:
             placed.extend(l for l in res["lessons"] if l["id"] != section_id)
 
+    # Trung GV xet theo CA NHOM dong giang (giao cua hai tap teacher_ids), khong
+    # chi GV chinh: solver rang buoc ca nhom nen neu chi so GV chinh o day thi
+    # keo-tha se bao "khong sao" cho dung cai cho ma thuat toan coi la trung.
+    my_tids = set(s.get("teacher_ids") or [s["teacher_id"]])
     teacher_blockers = [
         l for l in placed
-        if l["teacherId"] == s["teacher_id"] and _overlaps(slot, duration, l["slot"], l["duration"])
+        if my_tids.intersection(l.get("teacherIds") or [l["teacherId"]])
+        and _overlaps(slot, duration, l["slot"], l["duration"])
     ]
     same_room = [
         l for l in placed
@@ -306,6 +470,112 @@ def _detect_move_conflict(data, section_id, slot):
         "sameRoomCount": len(same_room),
         "pool": pool,
     }
+
+
+def _lich_ban_dau(data):
+    """Dung LICH BAN DAU tu cac lop DA CHOT GIO trong file, khong chay solver.
+
+    Vi sao can: nap file xong, man "Thoi khoa bieu" bao "Chua co lich nao - bam
+    Giai o buoc 2" du file da chot gio cho phan lon cac lop (HK1-2: 246/343). Giao
+    vu phai bam Giai moi thay duoc chinh cai minh vua nap - trong khi nhung gio do
+    la DA CHOT, khong phai do thuat toan xep.
+
+    Tra ve (ket_qua_GD1, ket_qua_GD2) dung khuon solver tra ve, kem co
+    initial=True de UI biet day KHONG phai ket qua da giai (thanh tien trinh van
+    hien "chua chay", nut buoc 3 van cho chay buoc 2 truoc).
+    """
+    p = data["params"]
+    theo_pha = {"GUEST": [], "RESIDENT": []}
+    for sid, s in data["sections"].items():
+        if s.get("time_assumed") or s.get("original_slot") is None:
+            continue
+        day, period = divmod(s["original_slot"], p["slotsPerDay"])
+        theo_pha.setdefault(s["teacher_type"], []).append({
+            "id": sid, "teacherId": s["teacher_id"],
+            "teacherName": sc.teacher_display(data, s["teacher_id"]),
+            "teacherIds": list(s.get("teacher_ids") or [s["teacher_id"]]),
+            "courseName": s.get("course_name"), "program": s["program"],
+            "programLabel": sc.section_program_label(data, s),
+            "coordinator": ", ".join(sc.section_coordinators(data, s)),
+            "roomType": s["room_type"], "day": day, "period": period,
+            "slot": s["original_slot"], "duration": s["duration"],
+            "teacherType": s["teacher_type"], "status": "DRAFT",
+        })
+
+    def goi(loai):
+        lessons = sorted(theo_pha[loai], key=lambda l: l["id"])
+        return {
+            "status": "TU_FILE", "elapsedSeconds": 0.0,
+            "total": sum(1 for s in data["sections"].values() if s["teacher_type"] == loai),
+            "placedCount": len(lessons), "lessons": lessons, "unplaced": [],
+            "initial": True,
+        }
+
+    return goi("GUEST"), goi("RESIDENT")
+
+
+def _ghim_gio_da_chot(data):
+    """GHIM moi lop da chot gio trong file vao STATE['overrides'].
+
+    Ghim la co che manh nhat trong ca hai pha (xem _solve_guest_with_overrides va
+    _ghim_tay_o_giai_doan_2) nen chay "Xep thinh giang"/"Ghep co huu" khong lam
+    xe dich cac lop nay. Solver von cung da ghim theo `original_slot`, nhung ghi
+    vao overrides de GIAO DIEN hien dung trang thai "da ghim" - giao vu nhin ra
+    ngay lop nao la gio chot tu file, lop nao do he thong xep.
+    """
+    STATE["overrides"] = {
+        sid: {"slot": s["original_slot"], "reason": "Giờ đã chốt trong file"}
+        for sid, s in data["sections"].items()
+        if not s.get("time_assumed") and s.get("original_slot") is not None
+    }
+
+
+def _chot_hoc_phan_du_gio_tu_file(data, nguon=None):
+    """Danh dau DA CHOT LICH cho moi hoc phan ma MOI lop cua no deu co gio trong
+    file. Tra ve so hoc phan vua chot.
+
+    Theo dung quyet dinh A2: *"cac lop da duoc import tu file la cac lop da chot
+    gio, tuc giao vien day da chot qua loi voi dieu phoi vien"*. Gio do von da
+    duoc ghim (_ghim_gio_da_chot) - viec con thieu chi la NOI RA tren giao dien,
+    de o "Da chot n/153 mon" khong bao 0 trong khi 246/343 lop da co gio chot.
+
+    Chi chot hoc phan DU gio: mot mon con lop chua co gio thi ban chinh thuc cua
+    no chua hoan chinh, chot vao la sai nghia. `truoc` de rong tuong ung "moi lop
+    von da co gio nay" - bo chot se tra dung ve gio trong file, khong ve "de he
+    thong tu xep".
+    """
+    theo_hp = {}
+    for sid, sec in data["sections"].items():
+        theo_hp.setdefault(sec.get("course_id"), []).append(sec)
+    now = datetime.datetime.now().isoformat(timespec="seconds")
+    dem = 0
+    for cid, ds in theo_hp.items():
+        hp = data.get("courses", {}).get(cid)
+        if hp is None or hp.get("chot"):
+            continue
+        if not ds or any(x.get("time_assumed") or x.get("original_slot") is None for x in ds):
+            continue
+        hp["chot"] = {
+            "at": now, "by": "Nhập từ Excel",
+            "note": f"Giờ đã chốt sẵn trong {nguon}" if nguon else "Giờ đã chốt sẵn trong file",
+            "soLop": len(ds), "tuFile": True,
+            "truoc": {str(x["id"]): {"day": x.get("day"), "periodStart": x.get("period_start"),
+                                     "periodEnd": x.get("period_end"), "timeAssumed": False}
+                      for x in ds},
+        }
+        dem += 1
+    return dem
+
+
+def _dat_lich_ban_dau(data, nguon=None):
+    """Ghim gio da chot + danh dau hoc phan du gio la DA CHOT + dat lich ban dau
+    vao STATE (dung sau khi nap file)."""
+    _ghim_gio_da_chot(data)
+    _chot_hoc_phan_du_gio_tu_file(data, nguon)
+    g, r = _lich_ban_dau(data)
+    _attach_override_metadata(data, g, "GUEST")
+    _attach_override_metadata(data, r, "RESIDENT")
+    STATE["guestResult"], STATE["residentResult"] = g, r
 
 
 def _attach_override_metadata(data, result, teacher_type):
@@ -364,19 +634,76 @@ def _solve_guest_with_overrides(data):
             data["submissions"][sid] = windows
 
 
-def _forbidden_from_resident_overrides(data):
-    """Ghim (dong 1) o Giai doan 2: solve_resident_phase() da co san tham so
-    'forbidden' (danh sach slot BI CAM cho 1 section) - tai dung CHINH co che do,
-    chi doi nguon: truoc day forbidden den tu nut 'Tu choi' cu (STATE['forbidden']),
-    gio tinh THANG tu STATE['overrides'] bang cach cam TOAN BO slot hop le TRU
-    slot da ghim, ep domain con lai dung 1 lua chon."""
-    forbidden = {}
-    for sid, ov in STATE["overrides"].items():
-        s = data["sections"].get(sid)
-        if not s or s["teacher_type"] != "RESIDENT":
-            continue
-        forbidden[sid] = [v for v in _own_valid_starts(data, sid) if v != ov["slot"]]
-    return forbidden
+def _mien_sau_khi_bo_ghim(data, sid):
+    """Mien gio cua mot lop SAU KHI bo ghim: dung y het nhu lop chua bao gio co gio
+    trong file - khung DA KHAI cua ca nhom day, chua ai khai thi tu do ca tuan.
+
+    Tinh lai bang chinh _apply_section_time(time_info=None) chu khong viet rieng:
+    luat "khai roi thi gioi han cung / chua khai thi tu do" chi nen nam mot cho.
+    Ham do sua thang tren `data` nen phai cat va tra lai nguyen ven ban goc - lop
+    van la lop DA CHOT GIO trong file, bo ghim chi la mot y kien cua giao vu o lan
+    giai nay, khong xoa du lieu file."""
+    s = data["sections"][sid]
+    giu = {k: s.get(k) for k in ("day", "period_start", "period_end", "original_slot",
+                                 "time_assumed", "availability_assumed")}
+    giu_sub = data["submissions"].get(sid)
+    giu_pending = sid in data["pending_section_ids"]
+    try:
+        teacher = data["teachers"][(s.get("teacher_ids") or [s["teacher_id"]])[0]]
+        _apply_section_time(data, sid, teacher, s["duration"], None)
+        return data["submissions"].get(sid) or []
+    finally:
+        s.update(giu)
+        if giu_sub is None:
+            data["submissions"].pop(sid, None)
+        else:
+            data["submissions"][sid] = giu_sub
+        if giu_pending and sid not in data["pending_section_ids"]:
+            data["pending_section_ids"].append(sid)
+        elif not giu_pending and sid in data["pending_section_ids"]:
+            data["pending_section_ids"].remove(sid)
+
+
+@contextlib.contextmanager
+def _tam_bo_ghim(data):
+    """Trong khoi `with`, cac lop da bam "Bo ghim" co submissions cua lop CHUA co
+    gio (thay vi dung mot slot chot tu file) - de ca hai pha deu xep lai that.
+
+    Dung `with` chu khong sua han: du lieu file van phai nguyen ven de con hien
+    "gio da chot trong file" o UI va de bo ghim nham thi ghim lai duoc."""
+    sids = [sid for sid in STATE["bo_ghim"] if sid in data["sections"]]
+    goc = {sid: data["submissions"].get(sid) for sid in sids}
+    goc_pending = list(data["pending_section_ids"])
+    try:
+        for sid in sids:
+            data["submissions"][sid] = _mien_sau_khi_bo_ghim(data, sid)
+        yield
+    finally:
+        for sid, v in goc.items():
+            if v is None:
+                data["submissions"].pop(sid, None)
+            else:
+                data["submissions"][sid] = v
+        data["pending_section_ids"][:] = goc_pending
+
+
+def _ghim_tay_o_giai_doan_2(data):
+    """Ghim (dong 1) o Giai doan 2: {section_id: slot} tu STATE['overrides'].
+
+    Truoc day ghim bang cach CAM toan bo slot hop le TRU slot da ghim
+    (`forbidden`). Cach do vo khi ghim sang Thu 7/Chu nhat: slot do khong nam
+    trong valid_starts() cua RESIDENT nen "cam tat ca" -> domain rong ->
+    solve_resident_phase quay ve toan bo valid_starts -> GHIM BI BO QUA am tham,
+    lop nhay ve mot ngay khac trong tuan.
+
+    Nay dua thang slot cho solver dat domain (xem tham so ghim_tay) - ghim duoc
+    moi ngay, dung nhu Giai doan 1 von da lam qua submissions=[slot]."""
+    return {
+        sid: ov["slot"]
+        for sid, ov in STATE["overrides"].items()
+        if ov.get("slot") is not None
+        and data["sections"].get(sid, {}).get("teacher_type") == "RESIDENT"
+    }
 
 
 @app.post("/api/generate")
@@ -388,6 +715,7 @@ def api_generate():
     STATE["guestResult"] = None
     STATE["residentResult"] = None
     STATE["overrides"] = {}
+    STATE["bo_ghim"] = set()
     return jsonify(_build_data_response(data))
 
 
@@ -403,7 +731,60 @@ REAL_DATA_FILES = {
 }
 
 
+# Chuan hoa program_id: chi tach dau ghep that su. KHONG dung cho bo loc.
+# Sentinel: phan biet "khong truyen time_info" voi "truyen None" (= de he thong
+# tu xep) - hai truong hop khac han nhau o _khoa_vi_da_chot.
+_KHONG_TRUYEN = object()
+
 _PROGRAM_SPLIT_RE = re.compile(r"[+.]")
+
+# Rieng cho BO LOC: ngoac va " - " trong file that vua dung de ghep ma
+# ('BICA (+ESCT)') vua de ghi chu ('BCSE (voi nhung SV...)', 'ESAS - Hoc ghep
+# voi cac lop khac') nen phai cat ca hai roi loc bo ghi chu, xem _tach_phan().
+# Khong gop vao _PROGRAM_SPLIT_RE: ham do dat TEN chuong trinh, cat ngoac o do
+# se doi 'BCSE (voi nhung SV chua hoc o ky 1)' thanh mot ten khac han.
+_PROGRAM_PART_RE = re.compile(r"[+.()\[\]]|\s-\s")
+
+
+_KHOA_SPLIT_RE = re.compile(r"[+,;/]")
+
+
+def _la_ghi_chu(phan):
+    """Phan nay la GHI CHU cua giao vu chu khong phai mot ma?
+
+    Ma chuong trinh/khoa la mot tu ('BCSE', 'Chung', 'VJU2024'). Ghi chu la mot
+    cau: 'voi nhung SV da hoc Triet', 'Hoc ghep voi cac lop khac'. Moc phan biet:
+    >= 2 tu VA co chu thuong - du de giu 'Chung' (1 tu) va loai het cac cau that
+    gap trong 3 file.
+    """
+    return len(phan.split()) >= 2 and any(c.islower() for c in phan)
+
+
+def _tach_phan(raw, chia_re):
+    """Tach mot o GHEP thanh cac thanh phan: 'BCSE+MJM' -> ['BCSE', 'MJM'],
+    'VJU2023+VJU2024' -> ['VJU2023', 'VJU2024'].
+
+    Dung cho BO LOC: mot lop ghi 'BCSE+MJM' la lop cua CA HAI chuong trinh, nen
+    loc 'BCSE' phai ra ca no. Truoc day loc so khop nguyen chuoi -> 'BCSE+MJM'
+    thanh mot muc RIENG trong danh sach chon, va chon 'BCSE' thi khong thay lop
+    do dau. Cung the voi khoa, cong them chuyen 'VJU2023+VJU2024' va
+    'VJU2024+VJU2023' hien thanh HAI muc gan giong nhau.
+
+    NGOAC lam duoc CA HAI viec trong file that, nen phai cat theo ngoac roi moi
+    xet tung phan:
+        'BICA (+ESCT)'                        -> ngoac chua MA thu hai
+        'BCSE (voi nhung SV chua hoc o ky 1)' -> ngoac chua GHI CHU
+    Cat theo ngoac ma khong xet thi ra 'BICA (' va 'ESCT)'; con bo thang phan
+    trong ngoac thi mat ESCT. Nen: cat, roi bo phan nao la ghi chu
+    (_la_ghi_chu). Con lai rong (ca o chi la mot cau) thi tra ve nguyen o - tha
+    de bo loc co mot muc xau con hon lam bien mat lop khoi moi bo loc.
+    """
+    tho = [p.strip(" 	.,;/+-()[]") for p in chia_re.split(raw or "")]
+    phan = [p for p in tho if p and not _la_ghi_chu(p)]
+    if phan:
+        return phan
+    goc = " ".join(str(raw or "").split())
+    return [goc] if goc else []
 
 
 def _canonical_program_name(raw):
@@ -446,6 +827,13 @@ def _merge_duplicate_programs(data):
 
     for s in data["sections"].values():
         s["program"] = pid_remap[s["program"]]
+        if s.get("program_ids"):
+            gop = []
+            for pid in s["program_ids"]:
+                moi = pid_remap[pid]
+                if moi not in gop:
+                    gop.append(moi)
+            s["program_ids"] = gop
     for t in data["teachers"].values():
         if "home_program" in t:
             t["home_program"] = pid_remap[t["home_program"]]
@@ -483,6 +871,7 @@ def api_load_real_data():
     STATE["guestResult"] = None
     STATE["residentResult"] = None
     STATE["overrides"] = {}
+    STATE["bo_ghim"] = set()
     return jsonify(_build_data_response(data, extra))
 
 
@@ -510,7 +899,8 @@ def _save_snapshot():
     snapshot = {**STATE["data"], "forced_conflict_teacher_ids": sorted(STATE["data"].get("forced_conflict_teacher_ids") or [])}
     try:
         with open(_SNAPSHOT_PATH, "w", encoding="utf-8") as f:
-            json.dump({"data": snapshot, "extra": STATE.get("extra")}, f, ensure_ascii=False)
+            json.dump({"data": snapshot, "extra": STATE.get("extra"),
+                       "coHuu": STATE.get("co_huu")}, f, ensure_ascii=False)
     except OSError:
         pass
 
@@ -526,6 +916,9 @@ def _load_snapshot():
             snap = json.load(f)
     except (OSError, json.JSONDecodeError):
         return
+    # Nap danh sach co huu TRUOC data: _dat_lich_ban_dau() o cuoi ham doc
+    # teacher_type, ma phan loai do phu thuoc danh sach nay.
+    STATE["co_huu"] = snap.get("coHuu")
     data = snap.get("data")
     if not data:
         return
@@ -536,6 +929,10 @@ def _load_snapshot():
     data["forced_conflict_teacher_ids"] = set(data.get("forced_conflict_teacher_ids") or [])
     STATE["data"] = data
     STATE["extra"] = snap.get("extra")
+    # Snapshot chi luu data/extra (ket qua giai khong luu - giai lai la ra). Nhung
+    # LICH BAN DAU tu gio da chot thi dung lai duoc ngay, khong thi mo lai app la
+    # man TKB trong tron du du lieu co day gio.
+    _dat_lich_ban_dau(data)
 
 
 def _parse_class_time(body, slots_per_day, teacher_type=None, enforce_cap=True):
@@ -547,11 +944,19 @@ def _parse_class_time(body, slots_per_day, teacher_type=None, enforce_cap=True):
     hoac de trong ca 3 truong; error la str neu du lieu nhap sai dinh dang/khoang.
     teacher_type (neu co): chan Thu vuot qua quy dinh (thinh giang toi Thu 7,
     co huu toi Thu 6) - giao vu go tay khong lach duoc rang buoc ma solver dang
-    tuan theo (xem sc.MAX_DAY_INDEX). enforce_cap=False (danh cho luong NAP FILE
-    hang loat - xem _build_manual_data_from_rows): file that co dong vi pham
-    (vd lop thuc tap co huu xep Chu nhat) - KHONG duoc lam RUNG ca lop (mat het
-    thong tin GV/SV/hoc phan), tra ve (None, None) NHU CHUA CO GIO de giao vu tu
-    gan lai, thay vi loi cung lam _build_manual_data_from_rows() bo hang lop do."""
+    tuan theo (xem sc.MAX_DAY_INDEX).
+
+    enforce_cap=False (danh cho luong NAP FILE hang loat - xem
+    _build_manual_data_from_rows): GIU NGUYEN gio trong file, ke ca Thu 7/Chu nhat
+    voi GV co huu. Vi mot dong trong file la mot lop DA CHOT GIO - GV va dieu phoi
+    vien da thong nhat voi nhau roi, he thong khong co quyen doi. Quy dinh ngay chi
+    ap cho lop CHUA co gio, luc do he thong moi la nguoi chon.
+
+    Truoc day cho nay tra (None, None) = bo gio, chuyen "de he thong tu xep": lam
+    15 lop cua HK1 2026-2027-2 (thuc tap/thuc hanh/do an xep Thu 7-Chu nhat) mat
+    gio thuc.
+
+    Tiet ngoai pham vi thi van bo gio (khong bo lop) - xem trong than ham."""
     if body.get("autoSchedule"):
         return None, None
     day, p_start, p_end = body.get("day"), body.get("periodStart"), body.get("periodEnd")
@@ -562,10 +967,16 @@ def _parse_class_time(body, slots_per_day, teacher_type=None, enforce_cap=True):
     except (TypeError, ValueError):
         return None, "Thứ/Tiết đầu/Tiết cuối phải là số nguyên."
     if not (0 <= day <= 6) or p_start < 1 or p_end < p_start or p_end > slots_per_day:
-        return None, "Thứ/Tiết không hợp lệ."
-    if teacher_type is not None and day > sc.max_day_index(teacher_type):
+        # O luong NAP FILE, mot o gio ngoai pham vi KHONG duoc lam rung ca lop:
+        # truoc day chon nguon gio ghi tiet 13 o buoc "Xac nhan gio hoc" lam lop
+        # bien mat khoi bo du lieu, mat luon GV/SV/hoc phan, chi de lai mot dong
+        # loi "Thu/Tiet khong hop le". Bo gio, giu lop.
         if not enforce_cap:
             return None, None
+        return None, "Thứ/Tiết không hợp lệ."
+    # Quy dinh ngay: CHI ap khi go tay (enforce_cap=True). Gio tu file la gio da
+    # chot - giu nguyen, chi ghi nhan de bao o buoc xem truoc.
+    if enforce_cap and teacher_type is not None and day > sc.max_day_index(teacher_type):
         max_label = _DAY_LABELS_VN[sc.max_day_index(teacher_type)]
         loai = "Thỉnh giảng" if teacher_type == "GUEST" else "Cơ hữu"
         return None, f"{loai} chỉ được dạy tới {max_label}."
@@ -577,9 +988,20 @@ def _apply_section_time(data, sid, teacher, duration, time_info):
     theo time_info (None = de he thong tu xep) - dung chung cho tao moi va sua.
     time_info khac None: gio da CHOT, submissions rut ve DUNG 1 slot do (giong 1
     dong Excel co gio parse duoc), bo qua het co che 'khung gio ranh cua GV'.
-    time_info None: giu nguyen hanh vi /api/manual/section cu - RESIDENT tu do
-    hoan toan (Giai doan 2), GUEST tra theo khung gio ranh da khai (/api/manual/
-    teacher), neu chua khai gi thi vao pending_section_ids nhu truoc."""
+    time_info None: xep theo khung gio ranh DA KHAI (/api/manual/teacher) - CA
+    thinh giang VA co huu, giao cac khung cua ca nhom (_gio_ranh_chung). Chua ai
+    khai gi thi tu do ca tuan (danh dau availability_assumed):
+      - GUEST: submissions = toan bo khung hop le (mien cua Giai doan 1 CHINH LA
+        submissions nen phai dien du).
+      - RESIDENT: submissions = [] (Giai doan 2 tu dung mien tu do) - hai cach ghi
+        khac nhau cho cung mot y, vi hai pha lay mien theo hai duong khac nhau.
+
+    Vi sao "chua khai = ranh ca tuan" chu khong phai "khong xep duoc": nap file HK2
+    cho 88/119 lop thinh giang khong co gio va GV chua khai gio ranh -> giai ra chi
+    xep duoc 24/119, tuc gan nhu vo dung cho den khi co nguoi khai tay 88 lan. Coi
+    nhu ranh ca tuan thi thuat toan xep duoc ngay, giao vu thu hep lai sau neu can
+    - va van dem duoc bao nhieu lop dang o trang thai "doan" (num_availability_
+    assumed) de khong ai hieu nham day la gio GV da xac nhan."""
     s = data["sections"][sid]
     if sid in data["pending_section_ids"]:
         data["pending_section_ids"].remove(sid)
@@ -594,17 +1016,36 @@ def _apply_section_time(data, sid, teacher, duration, time_info):
 
     s["day"] = s["period_start"] = s["period_end"] = s["original_slot"] = None
     s["time_assumed"] = True
-    if teacher["type"] == "RESIDENT":
-        data["submissions"][sid] = []
-        return
+    s["availability_assumed"] = False
+    # Loai lop va gio ranh deu tinh theo CA NHOM dong giang (_loai_lop/
+    # _gio_ranh_chung), khong chi GV chinh: lop 5 nguoi day thi phai xep vao gio
+    # CA 5 nguoi ranh.
+    tids = s.get("teacher_ids") or [s["teacher_id"]]
+    loai = s.get("teacher_type", teacher["type"])
     slots_per_day = data["params"]["slotsPerDay"]
-    available = data.get("manual_teacher_windows", {}).get(teacher["id"], [])
+    available, so_nguoi_khai = _gio_ranh_chung(data, tids)
     starts = _valid_starts_from_slots(available, duration, slots_per_day)
     if starts:
+        # DA KHAI gio -> GIOI HAN CUNG, ke ca voi co huu: chi xep trong khung do.
+        # Khung do khong bi cat theo quy dinh ngay (sc.MAX_DAY_INDEX): quy dinh la
+        # de HE THONG chon ho, con GV khai Thu 7 la con nguoi tu noi minh day duoc
+        # hom do - cung ly le voi "gio trong file la gio da chot".
         data["submissions"][sid] = starts
-    else:
+        return
+    if so_nguoi_khai:
+        # DA khai nhung khong con khung nao du dai cho lop nay (voi lop nhieu GV:
+        # giao cac khung khong con cho) -> xung dot THAT, phai bao chu khong duoc
+        # tu noi ra ca tuan.
         data["submissions"][sid] = []
         data["pending_section_ids"].append(sid)
+        return
+    # CHUA ai khai gi -> tu do ca tuan (xem docstring).
+    s["availability_assumed"] = True
+    if loai == "RESIDENT":
+        data["submissions"][sid] = []
+        return
+    data["submissions"][sid] = sc.valid_starts(
+        data["params"]["numDays"], slots_per_day, duration, loai)
 
 
 def _validate_section_body(data, body, enforce_day_cap=True):
@@ -615,13 +1056,35 @@ def _validate_section_body(data, body, enforce_day_cap=True):
     hoac (None, None, None, None, error_message) neu khong.
     enforce_day_cap=False: xem _parse_class_time - danh cho luong nap file, KHONG
     danh cho nhap tay qua form (POST/PATCH /api/manual/section luon giu True)."""
-    try:
-        teacher_id = int(body["teacherId"])
-    except (KeyError, TypeError, ValueError):
-        return None, None, None, None, "Thiếu hoặc sai teacherId."
-    teacher = data["teachers"].get(teacher_id)
-    if teacher is None:
-        return None, None, None, None, f"Không tìm thấy giảng viên id={teacher_id}."
+    # GIANG VIEN CUA LOP: mot DANH SACH, moi nguoi vai tro NGANG NHAU.
+    #
+    # `teacherIds` la dang chinh. Van nhan `teacherId` (+ `coTeacherIds` cu) de
+    # cac ban goi cu khong vo, nhung ben trong khong con khai niem "GV chinh":
+    # teacher_ids[0] chi la nguoi dau danh sach, dung lam khoa hien thi o cac man
+    # von chi cho 1 ten (luoi TKB, tra cuu theo GV).
+    #
+    # Solver dua CUNG MOT interval vao NoOverlap cua tung nguoi trong danh sach
+    # (scheduler_core: mot lop, nhieu nguoi, khong nhan doi nhu cau phong);
+    # check_cross_program_conflicts, loai lop (_loai_lop) va gio ranh cua lop
+    # (_gio_ranh_chung) cung tinh theo ca danh sach.
+    tho = body.get("teacherIds")
+    if tho is None:
+        tho = ([body["teacherId"]] if "teacherId" in body else []) + list(body.get("coTeacherIds") or [])
+    teacher_ids = []
+    for raw in tho:
+        try:
+            tid = int(raw)
+        except (TypeError, ValueError):
+            return None, None, None, None, f"Danh sách giảng viên có giá trị sai: {raw!r}."
+        if tid not in data["teachers"]:
+            return None, None, None, None, f"Không tìm thấy giảng viên id={tid}."
+        if tid not in teacher_ids:
+            teacher_ids.append(tid)
+    if not teacher_ids:
+        return None, None, None, None, "Lớp phải có ít nhất một giảng viên."
+    teacher_id = teacher_ids[0]
+    teacher = data["teachers"][teacher_id]
+    co_teacher_ids = teacher_ids[1:]
 
     try:
         course_id = int(body["courseId"])
@@ -647,14 +1110,23 @@ def _validate_section_body(data, body, enforce_day_cap=True):
     class_code = (body.get("classCode") or "").strip()
     lt_credits = body.get("ltCredits")
     th_credits = body.get("thCredits")
-    program_id = _get_or_create_program(data, body.get("program"))
+    # Mot lop co the thuoc NHIEU chuong trinh ("BCSE+MJM"). program_ids la danh
+    # sach day du; "program" chi la nguoi dau danh sach, dung lam khoa hien thi/
+    # sap xep o cac man von chi cho 1 gia tri (giong teacher_id vs teacher_ids).
+    program_ids = _program_ids_cua_lop(data, body.get("program"))
     room_type = "LAB" if (th_credits or 0) else "LT"
 
     fields = {
-        "program": program_id, "course_id": course_id,
+        "program": program_ids[0], "program_ids": program_ids,
+        # Nguyen van o CTDT trong file - de hien thi (A3: giu nguyen nhu file).
+        "program_raw": (body.get("program") or "").strip() or "Chung",
+        "course_id": course_id,
         "course_name": f"{course['name']} ({class_code})" if class_code else course["name"],
-        "teacher_id": teacher_id, "teacher_ids": [teacher_id],
-        "teacher_type": teacher["type"], "room_type": room_type, "duration": duration,
+        # teacher_id = nguoi dau danh sach (khoa hien thi), teacher_ids = CA NHOM.
+        "teacher_id": teacher_id, "teacher_ids": teacher_ids,
+        # Loai lop tinh theo CA NHOM - xem _loai_lop().
+        "teacher_type": _loai_lop(data, teacher_ids),
+        "room_type": room_type, "duration": duration,
         "class_code": class_code, "lt_credits": lt_credits, "th_credits": th_credits,
         "cohort": (body.get("cohort") or "").strip(),
         "expected_students": body.get("expectedStudents"),
@@ -676,11 +1148,12 @@ def _empty_manual_data():
     """Bo du lieu rong de bat dau 'nhap lieu thu cong' - dung cau truc voi
     generate_data()/load_real_fate_data() de solve_guest_phase/solve_resident_phase/
     check_cross_program_conflicts/_build_data_response dung duoc khong can sua gi.
-    numDays=7/slotsPerDay=12 khop quy uoc cua load_real_fate_data (Thu2..CN, toi da
-    12 tiet/ngay)."""
+    numDays=7 khop quy uoc cua load_real_fate_data (Thu2..CN). slotsPerDay=13 la
+    MAC DINH cho nhap tay; luong nap file con noi them theo tiet lon nhat co trong
+    file - xem _noi_slots_per_day()."""
     return {
         "params": {
-            "numDays": 7, "slotsPerDay": 12, "duration": 2,
+            "numDays": 7, "slotsPerDay": 13, "duration": 2,
             "ltPool": 60, "labPool": 40, "seed": 0,
             "pctPreSubmitted": 100, "numForcedConflicts": 0,
         },
@@ -727,6 +1200,29 @@ def _get_or_create_program(data, program_name):
     return pid
 
 
+def _program_ids_cua_lop(data, program_name):
+    """CTDT cua mot lop -> DANH SACH program_id, moi THANH PHAN mot id.
+
+    Chot voi khoa: o ghi "BCSE+MJM" la lop cua CA HAI chuong trinh, khong phai mot
+    chuong trinh thu ba ten "BCSE+MJM". Truoc day ca chuoi ghep thanh MOT
+    program_id rieng, keo theo hai cho sai:
+      - check_cross_program_conflicts coi "BCSE+MJM" khac "BCSE" nen GV day ca hai
+        khong bi tinh la day lien chuong trinh (bo sot);
+      - dieu phoi vien sinh ra ten "DPV-BCSE+MJM", trong khi thuc te la DPV cua
+        BCSE va DPV cua MJM - hai nguoi.
+
+    Ten hien thi VAN giu nguyen nhu file (section['program_raw']) - day chi la cach
+    he thong HIEU o do, khong phai cach no VIET ra."""
+    phan = _tach_phan(program_name, _PROGRAM_PART_RE) or ["Chung"]
+    ids, da_co = [], set()
+    for ten in phan:
+        pid = _get_or_create_program(data, ten)
+        if pid not in da_co:
+            da_co.add(pid)
+            ids.append(pid)
+    return ids
+
+
 def _valid_starts_from_slots(available_slots, duration, slots_per_day):
     """Slot bat dau hop le = TOAN BO 'duration' slot lien tiep TU day (cung 1
     ngay, KHONG duoc vat sang ngay hom sau) deu nam trong tap slot GV ranh.
@@ -755,33 +1251,150 @@ def _sync_teacher_sections(data, teacher_id):
     duoc dong bo lai o day) VA dang time_assumed=True (chua duoc chot gio cu
     the boi giao vu - gio da chot thi khong phu thuoc GV ranh luc nao nua).
     Khop theo teacher_ids (ca dong giang day, giong check_cross_program_conflicts
-    ben scheduler_core.py), nhung teacher_type tren section CHI cap nhat khi
-    tid la GV CHINH (s['teacher_id']) - GV chinh moi quyet dinh section thuoc
-    Giai doan 1/2, dung nhu luc tao (xem _validate_section_body)."""
-    teacher = data["teachers"][teacher_id]
-    slots_per_day = data["params"]["slotsPerDay"]
-    availability = data.get("manual_teacher_windows", {}).get(teacher_id, [])
+    ben scheduler_core.py). teacher_type va gio ranh tinh lai theo CA NHOM
+    (_loai_lop/_gio_ranh_chung) chu khong theo GV chinh: doi mot nguoi dong giang
+    tu co huu sang thinh giang thi lop phai chuyen sang Giai doan 1, va khung gio
+    cua lop phai hep lai theo nguoi vua khai."""
     for sid, s in data["sections"].items():
         if s.get("course_id") is None:
             continue
         tids = s.get("teacher_ids") or [s["teacher_id"]]
         if teacher_id not in tids:
             continue
-        if teacher_id == s["teacher_id"]:
-            s["teacher_type"] = teacher["type"]
+        s["teacher_type"] = _loai_lop(data, tids)
         if not s.get("time_assumed"):
             continue
-        if s["teacher_type"] == "RESIDENT":
-            data["submissions"][sid] = []
-            if sid in data["pending_section_ids"]:
-                data["pending_section_ids"].remove(sid)
-            continue
-        starts = _valid_starts_from_slots(availability, s["duration"], slots_per_day)
-        data["submissions"][sid] = starts
-        if starts and sid in data["pending_section_ids"]:
-            data["pending_section_ids"].remove(sid)
-        elif not starts and sid not in data["pending_section_ids"]:
-            data["pending_section_ids"].append(sid)
+        # Dung LAI _apply_section_time thay vi tinh lai o day: no la CHO DUY NHAT
+        # biet luat "da khai -> gioi han cung / chua khai -> tu do ca tuan", va
+        # luat do vua doi (khai cho co huu gio cung co tac dung). Hai ban sao thi
+        # se lech nhau ngay lan sua sau.
+        chinh = data["teachers"].get(s["teacher_id"])
+        if chinh is not None:
+            _apply_section_time(data, sid, chinh, s["duration"], None)
+
+
+def _ap_lai_loai_gv(data):
+    """Phan loai lai TOAN BO giang vien dang co theo luat hien hanh (_loai_gv) roi
+    dong bo cac lop bi anh huong. Tra ve danh sach {id, name, tu, sang}.
+
+    Dung khi vua nap/xoa danh sach co huu: du lieu da nap tu truoc phai theo luat
+    MOI ngay, khong doi nap lai file ke hoach. Doi loai GV keo theo lop doi giai
+    doan (_loai_lop) va doi MIEN GIO (thinh giang xep theo khung da khai, co huu
+    tu do) - nen phai di qua _sync_teacher_sections chu khong chi ghi lai `type`.
+    """
+    doi = []
+    for t in data["teachers"].values():
+        # Ban ghi "cho trong" van theo luat o don vi - xem cho tao no.
+        moi = _loai_gv(t.get("org"), None if t.get("placeholder") else t.get("name"))
+        if moi != t["type"]:
+            doi.append({"id": t["id"], "name": t.get("name"), "tu": t["type"], "sang": moi})
+            t["type"] = moi
+    for m in doi:
+        _sync_teacher_sections(data, m["id"])
+    # Lop KHONG nhap qua UI (nap tu Excel) khong duoc _sync_teacher_sections cham
+    # vao, nhung loai lop van phai theo nhom GV moi - neu khong, lop cua GV vua
+    # doi loai se ket lai o giai doan cu.
+    for s in data["sections"].values():
+        s["teacher_type"] = _loai_lop(data, s.get("teacher_ids") or [s["teacher_id"]])
+    data["num_resident"] = sum(1 for t in data["teachers"].values() if t["type"] == "RESIDENT")
+    data["num_guest"] = len(data["teachers"]) - data["num_resident"]
+    return doi
+
+
+def _doi_chieu_danh_sach(data, by_key):
+    """So danh sach co huu voi giang vien dang co -> bao cao cho buoc XEM TRUOC.
+
+    Ba con so quan trong, moi con so mot y nghia khac han:
+      - `khop`      : nguoi trong danh sach co day ky nay (se thanh co huu)
+      - `doiSangCoHuu` / `doiSangThinhGiang`: ai bi DOI loai neu bam nap
+      - `khongDay`  : nguoi trong danh sach nhung khong day lop nao ky nay -
+                      binh thuong (nghi/khong phan cong), chi de biet.
+    """
+    that = [t for t in (data or {}).get("teachers", {}).values() if not t.get("placeholder")]
+    co_trong_ds = {fate_lecturers.khoa_ten(t.get("name")) for t in that}
+    khop = [t for t in that if fate_lecturers.khoa_ten(t.get("name")) in by_key]
+    return {
+        "soGvDangCo": len(that),
+        "khop": len(khop),
+        "doiSangCoHuu": [
+            {"id": t["id"], "name": t.get("name"), "org": t.get("org")}
+            for t in that
+            if t["type"] != "RESIDENT" and fate_lecturers.khoa_ten(t.get("name")) in by_key
+        ],
+        "doiSangThinhGiang": [
+            {"id": t["id"], "name": t.get("name"), "org": t.get("org")}
+            for t in that
+            if t["type"] == "RESIDENT" and fate_lecturers.khoa_ten(t.get("name")) not in by_key
+        ],
+        "khongDay": sorted(v["name"] for k, v in by_key.items() if k not in co_trong_ds),
+    }
+
+
+@app.get("/api/manual/lecturers")
+def api_manual_lecturers():
+    """Danh sach GV co huu dang luu (None = chua nap -> van dung luat o don vi)."""
+    ds = STATE.get("co_huu")
+    if not ds:
+        return jsonify({"loaded": False, "rows": [], "count": 0, "fileName": None})
+    return jsonify({
+        "loaded": True, "count": ds["count"], "fileName": ds.get("fileName"),
+        "rows": sorted(ds["byKey"].values(), key=lambda m: m["name"]),
+    })
+
+
+@app.post("/api/manual/lecturers/preview")
+def api_manual_lecturers_preview():
+    """Doc file danh sach GV co huu -> BAN XEM TRUOC, CHUA ghi gi vao STATE.
+
+    Hai buoc giong luong nhap file ke hoach: nap danh sach co the DOI LOAI nhieu
+    giang vien, keo theo lop doi giai doan xep lich - phai cho xem truoc ai bi doi
+    roi moi quyet."""
+    f = request.files.get("file")
+    if f is None or not f.filename:
+        return jsonify({"error": "Chưa chọn file."}), 400
+    result, err = fate_lecturers.read_lecturers(f.stream)
+    if err:
+        return jsonify({"error": err}), 400
+    by_key = {m["key"]: m for m in result["rows"]}
+    STATE["co_huu_pending"] = {"byKey": by_key, "fileName": f.filename,
+                               "count": len(by_key), "result": result}
+    return jsonify({
+        "fileName": f.filename, "sheet": result["sheet"], "count": len(by_key),
+        "duplicates": result["duplicates"], "skipped": result["skipped"],
+        "sample": [m["name"] for m in result["rows"][:8]],
+        **_doi_chieu_danh_sach(STATE.get("data"), by_key),
+    })
+
+
+@app.post("/api/manual/lecturers/commit")
+def api_manual_lecturers_commit():
+    """Ghi danh sach vua xem truoc vao STATE va phan loai lai toan bo GV."""
+    pending = STATE.get("co_huu_pending")
+    if not pending:
+        return jsonify({"error": "Chưa có bản xem trước. Hãy tải file lên trước."}), 400
+    STATE["co_huu"] = {"byKey": pending["byKey"], "fileName": pending["fileName"],
+                       "count": pending["count"]}
+    STATE["co_huu_pending"] = None
+    doi = _ap_lai_loai_gv(STATE["data"]) if STATE["data"] else []
+    _save_snapshot()
+    return jsonify({
+        "count": STATE["co_huu"]["count"], "fileName": STATE["co_huu"]["fileName"],
+        "changed": doi,
+        **(_build_data_response(STATE["data"], STATE.get("extra")) if STATE["data"] else {}),
+    })
+
+
+@app.delete("/api/manual/lecturers")
+def api_manual_lecturers_clear():
+    """Bo danh sach co huu -> quay ve luat cu (doc o "Don vi cong tac")."""
+    STATE["co_huu"] = None
+    STATE["co_huu_pending"] = None
+    doi = _ap_lai_loai_gv(STATE["data"]) if STATE["data"] else []
+    _save_snapshot()
+    return jsonify({
+        "loaded": False, "changed": doi,
+        **(_build_data_response(STATE["data"], STATE.get("extra")) if STATE["data"] else {}),
+    })
 
 
 @app.post("/api/manual/init")
@@ -796,8 +1409,250 @@ def api_manual_init():
     STATE["guestResult"] = None
     STATE["residentResult"] = None
     STATE["overrides"] = {}
+    STATE["bo_ghim"] = set()
     _save_snapshot()
     return jsonify(_build_data_response(data, extra))
+
+
+def _loai_lop(data, teacher_ids):
+    """Lop thuoc Giai doan 1 (GUEST) hay 2 (RESIDENT) khi co NHIEU GV dong giang.
+
+    Quy tac: CO MOT NGUOI thinh giang la lop di Giai doan 1.
+
+    Vi sao khong lay theo GV chinh: GD1 xep theo KHUNG GIO DA KHAI cua thinh giang,
+    GD2 thi cho chon tu do ca tuan. Neu lop co mot khach moi ma lai di GD2 thi he
+    thong co the dat lop vao gio ma nguoi do khong den duoc - va khong ai biet, vi
+    khung gio ho khai khong duoc dung den. Huong sai con lai (di GD1 trong khi ca
+    nhom deu co huu) chi lam lop bi bo hep hon can thiet, giao vu nhin ra ngay.
+    """
+    return ("GUEST" if any(data["teachers"][t]["type"] == "GUEST"
+                           for t in teacher_ids if t in data["teachers"])
+            else "RESIDENT")
+
+
+def _gio_ranh_chung(data, teacher_ids):
+    """Khung gio ranh dung duoc cho CA NHOM = GIAO cac khung tung nguoi da khai.
+
+    Nguoi CHUA khai gi khong bi tinh vao giao (xem C2: chua khai = ranh ca tuan),
+    nen ho khong lam hep khung cua nguoi khac. Tra ve (cac_slot, so_nguoi_da_khai).
+    """
+    windows = data.get("manual_teacher_windows", {})
+    da_khai = [set(windows.get(t) or []) for t in teacher_ids if windows.get(t)]
+    if not da_khai:
+        return [], 0
+    return sorted(set.intersection(*da_khai)), len(da_khai)
+
+
+def _co_huu_theo_danh_sach(name):
+    """True/False neu DA nap danh sach co huu, None neu chua nap."""
+    ds = STATE.get("co_huu")
+    if not ds or not ds.get("byKey"):
+        return None
+    return fate_lecturers.khoa_ten(name) in ds["byKey"]
+
+
+def _loai_gv(org, name=None):
+    """Co huu (RESIDENT, Giai doan 2) hay thinh giang (GUEST, Giai doan 1)?
+
+    1. DA nap danh sach GV co huu -> danh sach la NGUON CHINH THUC: co ten trong
+       do la co huu, khong co la thinh giang. Khong doc o don vi nua.
+    2. CHUA nap -> quay ve luat cu: o "Don vi cong tac" chua "Viet Nhat" thi co
+       huu (cung luat voi load_real_fate_data).
+
+    Vi sao doi: luat cu doc chinh o don vi trong file ke hoach giang day, ma o do
+    giao vu go tay moi ky nen sai du kieu - bo trong (HK2: 6 nguoi), ghi ten
+    truong moi dong mot kieu, va nang nhat la MOT o don vi cho ca nhom dong giang
+    (dong 243 HK1-2: hai khach moi DH Tokyo bi xep co huu vi o do co ca dong
+    "Truong DH Viet Nhat" cua nguoi thu ba).
+    """
+    theo_ds = _co_huu_theo_danh_sach(name) if name else None
+    if theo_ds is not None:
+        return "RESIDENT" if theo_ds else "GUEST"
+    low = (org or "").lower()
+    return "RESIDENT" if ("việt nhật" in low or "viet nhat" in low) else "GUEST"
+
+
+def _phan_tu(ds, k):
+    """Phan tu thu k, "" neu khong co (o email/SDT cua dong dong giang khong luon
+    du cho moi nguoi - xem fate_import._split_aligned)."""
+    return ds[k] if ds and k < len(ds) else ""
+
+
+def _noi_slots_per_day(data, rows):
+    """Noi so tiet/ngay cho vua tiet lon nhat co trong file (khong bao gio thu hep).
+
+    Truoc day chot cung 12 nen file HK1 2026-2027-2 ghi tiet 13 (dong 280/281:
+    CSE4001, CSE4002) bi coi la "khong hop le". Chot cung mot con so moi ky lai
+    phai sua code, nen lam nhu load_real_fate_data da lam: lay theo du lieu.
+
+    Chan tren la fate_import.MAX_TIET - gia tri lon hon la go sai, noi theo no chi
+    phong to mo hinh solver vo ich (moi tiet nhan 7 ngay). Nhung dong do da co
+    canh bao "gio_ngoai_pham_vi_tiet" va se thanh "de he thong tu xep".
+    """
+    tiet = [r["periodEnd"] for r in rows
+            if r["periodEnd"] and r["periodEnd"] <= fate_import.MAX_TIET]
+    if tiet:
+        data["params"]["slotsPerDay"] = max(data["params"]["slotsPerDay"], max(tiet))
+    return data["params"]["slotsPerDay"]
+
+
+def _doi_slots_per_day(data, spd_moi):
+    """Doi so tiet/ngay cua mot bo du lieu va MA HOA LAI moi slot theo so moi.
+
+    slot = day * slotsPerDay + (tiet - 1), tuc con so slot chi co nghia KEM theo
+    slotsPerDay cua chinh bo du lieu do. Gop hai bo co so tiet/ngay khac nhau ma
+    khong ma hoa lai thi gio bi doc sai hoan toan: do duoc mot lop "Thu 4 tiet 3-4"
+    (spd=13) sau khi gop vao bo spd=15 thanh "Thu 2 tiet 14".
+
+    Dung lai _apply_section_time() cho tung lop thay vi tu tinh: no la CHO DUY NHAT
+    biet luat sinh submissions/pending (gio da chot -> 1 slot; chua co gio -> khung
+    ranh cua nhom hoac ca tuan).
+    """
+    spd_cu = data["params"]["slotsPerDay"]
+    if spd_moi == spd_cu:
+        return
+
+    def ma_hoa_lai(slot):
+        day, tiet0 = divmod(slot, spd_cu)
+        return day * spd_moi + tiet0
+
+    data["params"]["slotsPerDay"] = spd_moi
+    for tid, slots in list((data.get("manual_teacher_windows") or {}).items()):
+        data["manual_teacher_windows"][tid] = [ma_hoa_lai(s) for s in slots]
+
+    for sid, s in data["sections"].items():
+        teacher = data["teachers"].get(s["teacher_id"])
+        if teacher is None:
+            continue
+        if s.get("time_assumed") or s.get("original_slot") is None:
+            time_info = None
+        elif s.get("day") is not None:
+            time_info = {"day": s["day"], "period_start": s["period_start"],
+                         "period_end": s["period_end"]}
+        else:
+            # Lop tu duong "Du lieu that"/gia lap chi co original_slot, khong co
+            # day/period_start - suy lai tu slot theo so tiet CU.
+            day, tiet0 = divmod(s["original_slot"], spd_cu)
+            time_info = {"day": day, "period_start": tiet0 + 1,
+                         "period_end": tiet0 + s["duration"]}
+        _apply_section_time(data, sid, teacher, s["duration"], time_info)
+
+
+def _khoa_lop(data, s):
+    """Khoa nhan dien MOT LOP de biet gop them co bi trung: ma lop + hoc phan +
+    GV chinh + gio. Trung ca 4 thu nay thi gan nhu chac chan la nap lai dung dong
+    do (vd nap lai file da sua vai o), khong phai lop that thu hai."""
+    hp = data.get("courses", {}).get(s.get("course_id")) or {}
+    gv = data["teachers"].get(s["teacher_id"], {})
+    return (
+        (s.get("class_code") or "").strip().lower(),
+        fate_import.khoa_gv(hp.get("name") or s.get("course_name") or ""),
+        fate_import.khoa_gv(gv.get("name") or ""),
+        s.get("original_slot"),
+    )
+
+
+def _gop_manual_data(cu, moi):
+    """GOP bo du lieu vua nap (moi) VAO bo dang co (cu). Doi `cu` tai cho.
+
+    Vi sao can: truoc day nhap file chi GHI DE - nap file khoa thu hai la mat sach
+    file thu nhat va mat cong giao vu da sua. Nay gop duoc.
+
+    Gop theo dung cac khoa ma ban thanh cong dang dung: giang vien theo
+    fate_import.khoa_gv (bo hoc ham/dau cau), hoc phan theo (ma, ten), chuong trinh
+    theo ten qua _get_or_create_program. Lop TRUNG (xem _khoa_lop) thi BO QUA -
+    nap lai cung mot file khong nhan doi so lop.
+
+    Tra ve bao cao {soLopThem, soLopTrung, soGvThem, soHocPhanThem} de UI noi ro
+    da gop duoc gi, thay vi bao "xong" mo ho.
+    """
+    bao_cao = {"soLopThem": 0, "soLopTrung": 0, "soGvThem": 0, "soHocPhanThem": 0}
+
+    # Dua CA HAI bo ve cung so tiet/ngay TRUOC khi tron section: slot mang nghia
+    # khac nhau o hai bo neu slotsPerDay khac nhau (xem _doi_slots_per_day).
+    spd = max(cu["params"]["slotsPerDay"], moi["params"]["slotsPerDay"])
+    if spd != cu["params"]["slotsPerDay"]:
+        bao_cao["soTietMoiNgay"] = spd
+    _doi_slots_per_day(cu, spd)
+    _doi_slots_per_day(moi, spd)
+
+    # --- Giang vien: map id cu <- id moi ---
+    gv_theo_khoa = {fate_import.khoa_gv(t["name"]): tid
+                    for tid, t in cu["teachers"].items() if not t.get("placeholder")}
+    map_gv = {}
+    for tid, t in moi["teachers"].items():
+        # Ban ghi "cho trong" (Phong Dao tao dieu phoi...) LUON tao moi: moi lop
+        # chua phan cong phai co ban ghi rieng, khong duoc dung chung (neu khong
+        # he thong coi ca chuc lop la cua mot nguoi -> bao trung gio gia).
+        khoa = fate_import.khoa_gv(t["name"])
+        if not t.get("placeholder") and khoa in gv_theo_khoa:
+            map_gv[tid] = gv_theo_khoa[khoa]
+            continue
+        moi_id = max(cu["teachers"], default=-1) + 1
+        cu["teachers"][moi_id] = {**t, "id": moi_id}
+        cu.setdefault("manual_teacher_windows", {})[moi_id] = list(
+            moi.get("manual_teacher_windows", {}).get(tid) or [])
+        map_gv[tid] = moi_id
+        if not t.get("placeholder"):
+            gv_theo_khoa[khoa] = moi_id
+            bao_cao["soGvThem"] += 1
+
+    # --- Hoc phan ---
+    hp_theo_khoa = {((c.get("code") or "").strip().lower(),
+                     fate_import.khoa_gv(c.get("name") or "")): cid
+                    for cid, c in cu.get("courses", {}).items()}
+    map_hp = {}
+    for cid, c in moi.get("courses", {}).items():
+        khoa = ((c.get("code") or "").strip().lower(), fate_import.khoa_gv(c.get("name") or ""))
+        if khoa in hp_theo_khoa:
+            map_hp[cid] = hp_theo_khoa[khoa]
+            continue
+        moi_id = max(cu.setdefault("courses", {}), default=-1) + 1
+        cu["courses"][moi_id] = {**c, "id": moi_id}
+        map_hp[cid] = hp_theo_khoa[khoa] = moi_id
+        bao_cao["soHocPhanThem"] += 1
+
+    # --- Lop ---
+    #
+    # Dem theo SO LUONG, khong dung tap hop. Mot file that co nhieu lop DUNG CHUNG
+    # khoa nay: 5 lop "THL1057 / Nha nuoc va phap luat / Phong Dao tao dieu phoi /
+    # chua co gio" la 5 lop khac nhau nhung khong co gi de phan biet. Do tren HK2:
+    # 23 khoa bi lap, phu 34 lop. Neu dung tap hop thi moi nhom thu ve 1 -> gop mot
+    # file vao bo khac lam RUNG 34 lop that.
+    #
+    # Dem thi: nap lai dung file da co (5 gap 5) -> bo qua het, khong nhan doi; con
+    # gop file khac (5 gap 0) -> them du 5.
+    dem_da_co = Counter(_khoa_lop(cu, s) for s in cu["sections"].values())
+    for sid, s in sorted(moi["sections"].items()):
+        moi_s = {
+            **s,
+            "teacher_id": map_gv[s["teacher_id"]],
+            "teacher_ids": [map_gv[t] for t in (s.get("teacher_ids") or [s["teacher_id"]])],
+            "course_id": map_hp.get(s.get("course_id")),
+        }
+        # CTDT: gop theo NGUYEN VAN o trong file ("BCSE+MJM") roi tach lai thanh
+        # tung thanh phan trong bo `cu` - id o hai bo khong the dung chung.
+        moi_s["program_ids"] = _program_ids_cua_lop(cu, s.get("program_raw"))
+        moi_s["program"] = moi_s["program_ids"][0]
+        khoa = _khoa_lop(cu, moi_s)
+        if dem_da_co[khoa] > 0:
+            dem_da_co[khoa] -= 1  # dung MOT ban da co cho lop nay
+            bao_cao["soLopTrung"] += 1
+            continue
+        moi_sid = max(cu["sections"], default=-1) + 1
+        moi_s["id"] = moi_sid
+        cu["sections"][moi_sid] = moi_s
+        cu["submissions"][moi_sid] = list(moi["submissions"].get(sid) or [])
+        if sid in moi.get("pending_section_ids", []):
+            cu["pending_section_ids"].append(moi_sid)
+        bao_cao["soLopThem"] += 1
+
+    cu["num_resident"] = sum(1 for t in cu["teachers"].values() if t["type"] == "RESIDENT")
+    cu["num_guest"] = len(cu["teachers"]) - cu["num_resident"]
+    cu["num_time_assumed"] = sum(1 for s in cu["sections"].values() if s.get("time_assumed"))
+    cu["num_availability_assumed"] = sum(
+        1 for s in cu["sections"].values() if s.get("availability_assumed"))
+    return bao_cao
 
 
 def _build_manual_data_from_rows(rows):
@@ -815,6 +1670,15 @@ def _build_manual_data_from_rows(rows):
     loi = []
     canh_bao = []
 
+    # PHAI noi truoc khi dung section: _parse_class_time kiem tra tiet <= slotsPerDay
+    # va _apply_section_time tinh slot = day * slotsPerDay + (tiet - 1).
+    spd = _noi_slots_per_day(data, rows)
+    if spd > _empty_manual_data()["params"]["slotsPerDay"]:
+        canh_bao.append({
+            "row": None, "kind": "noi_so_tiet",
+            "detail": f"File có giờ tới tiết {spd} → đặt {spd} tiết/ngày cho cả thời khoá biểu",
+        })
+
     # --- Giang vien: gop theo TEN (da chuan hoa), KHONG theo (ten, don vi) ---
     #
     # Trong file that, cung mot nguoi hay bi ghi don vi moi dong mot kieu:
@@ -831,6 +1695,51 @@ def _build_manual_data_from_rows(rows):
     # Moi truong hop don vi ghi khac nhau deu duoc bao len o buoc xem truoc.
     teacher_ids = {}
     org_khac = {}
+    bien_the = {}
+
+    def _dang_ky_gv(name, org, title, email, phone):
+        """Tao moi HOAC dung lai ban ghi GV theo TEN da chuan hoa. Tra ve id.
+
+        Dung chung cho GV chinh va GV dong giang: nguoi dong giang o lop nay co
+        the la GV chinh o lop khac, phai ra CUNG mot ban ghi - neu khong thi mot
+        nguoi bi tach lam hai va het phat hien duoc trung lich cua chinh ho.
+
+        Khoa gop BO hoc ham/so thu tu/dau cau (fate_import.khoa_gv) - xem chu
+        thich o do; ten HIEN THI giu nguyen cach ghi trong file (uu tien ban day
+        du hon, thuong la ban co hoc ham).
+        """
+        name = " ".join(str(name or "").split())
+        key = fate_import.khoa_gv(name)
+        if key in teacher_ids:
+            t = data["teachers"][teacher_ids[key]]
+            if name and name != t["name"]:
+                bien_the.setdefault(t["id"], {t["name"]}).add(name)
+                if len(name) > len(t["name"]):
+                    t["name"] = name  # ban ghi day du hon (thuong la co hoc ham)
+            if org and org != t["org"]:
+                if t["org"]:
+                    org_khac.setdefault(t["id"], {t["org"]}).add(org)
+                else:
+                    # Ban ghi dau bo trong don vi -> lay don vi dau tien tim duoc,
+                    # va phan loai lai GUEST/RESIDENT theo no.
+                    t["org"] = org
+                    t["type"] = _loai_gv(org, t["name"])
+            # Cac truong con lai: lap day cho nao con trong.
+            for field, val in (("title", title), ("email", email), ("phone", phone)):
+                if not t[field] and val:
+                    t[field] = val
+            return teacher_ids[key]
+
+        tid = len(data["teachers"])
+        data["teachers"][tid] = {
+            "id": tid, "name": name, "type": _loai_gv(org, name), "org": org,
+            "title": title, "email": email, "phone": phone,
+        }
+        # Chua khai gio ranh - giao vu se khai sau o "Chuan bi du lieu".
+        data.setdefault("manual_teacher_windows", {})[tid] = []
+        teacher_ids[key] = tid
+        return tid
+
     for idx, r in enumerate(rows):
         org = r["teacherOrg"].strip()
 
@@ -847,8 +1756,11 @@ def _build_manual_data_from_rows(rows):
         if r.get("chuaPhanCong"):
             tid = len(data["teachers"])
             data["teachers"][tid] = {
+                # CHO TRONG, khong phai mot con nguoi -> danh sach GV co huu
+                # khong the noi gi ve no. Phan loai theo o "Don vi cong tac" nhu
+                # cu; giao vu gan GV that thi lop tinh lai theo nguoi do.
                 "id": tid, "name": r["teacherName"] or "(Chưa phân công)",
-                "type": "RESIDENT" if ("việt nhật" in org.lower() or "viet nhat" in org.lower()) else "GUEST",
+                "type": _loai_gv(org),
                 "org": org, "title": r["teacherTitle"],
                 "email": r["teacherEmail"], "phone": r["teacherPhone"],
                 "placeholder": True,
@@ -857,46 +1769,32 @@ def _build_manual_data_from_rows(rows):
             teacher_ids[f"__chua_phan_cong_{idx}"] = tid
             continue
 
-        key = " ".join(r["teacherName"].split()).lower()
-        if key in teacher_ids:
-            t = data["teachers"][teacher_ids[key]]
-            if org and org != t["org"]:
-                if t["org"]:
-                    org_khac.setdefault(t["name"], {t["org"]}).add(org)
-                else:
-                    # Ban ghi dau bo trong don vi -> lay don vi dau tien tim duoc,
-                    # va phan loai lai GUEST/RESIDENT theo no.
-                    t["org"] = org
-                    low = org.lower()
-                    t["type"] = "RESIDENT" if ("việt nhật" in low or "viet nhat" in low) else "GUEST"
-            # Cac truong con lai: lap day cho nao con trong.
-            for field, val in (("title", r["teacherTitle"]), ("email", r["teacherEmail"]),
-                               ("phone", r["teacherPhone"])):
-                if not t[field] and val:
-                    t[field] = val
-            continue
+        _dang_ky_gv(r["teacherName"], org, r["teacherTitle"], r["teacherEmail"], r["teacherPhone"])
 
-        low = org.lower()
-        tid = len(data["teachers"])
-        data["teachers"][tid] = {
-            "id": tid,
-            "name": r["teacherName"],
-            # Cung luat phan loai voi load_real_fate_data: don vi cong tac co
-            # "Viet Nhat" -> co huu (Giai doan 2), con lai -> thinh giang (GD1).
-            "type": "RESIDENT" if ("việt nhật" in low or "viet nhat" in low) else "GUEST",
-            "org": org,
-            "title": r["teacherTitle"],
-            "email": r["teacherEmail"],
-            "phone": r["teacherPhone"],
-        }
-        # Chua khai gio ranh - giao vu se khai sau o "Chuan bi du lieu".
-        data.setdefault("manual_teacher_windows", {})[tid] = []
-        teacher_ids[key] = tid
+        # GV DONG GIANG (o ten ghi nhieu nguoi): moi nguoi mot ban ghi RIENG, de
+        # ho cung bi rang buoc lich o lop nay - xem chu thich o
+        # _validate_section_body. Truoc day chi lay nguoi dau, nen nguoi thu 2+
+        # bien mat khoi lop: ai cung day mot lop khac dung gio nay thi he thong
+        # KHONG bao trung, va nguoi khong day lop nao khac thi khong ton tai.
+        #
+        # Hoc ham chi gan cho nguoi DAU: o "Học hàm, học vị" cua file ghi mot gia
+        # tri cho ca o ten (vd "TS." cho 5 nguoi) nen khong the biet chac cua ai.
+        for j, ten_dg in enumerate(r.get("coTeacherNames") or []):
+            # Don vi RIENG cua tung nguoi khi o do tach duoc (fate_import tach
+            # theo vi tri nhu email/SDT); khong tach duoc thi dung chung o.
+            _dang_ky_gv(ten_dg, _phan_tu(r.get("coTeacherOrgs"), j) or org, "",
+                        _phan_tu(r.get("coTeacherEmails"), j),
+                        _phan_tu(r.get("coTeacherPhones"), j))
 
-    for ten, orgs in org_khac.items():
+    for tid, orgs in org_khac.items():
         canh_bao.append({
             "row": None, "kind": "gop_giang_vien",
-            "detail": f"{ten} — {' · '.join(sorted(orgs))}",
+            "detail": f"{data['teachers'][tid]['name']} — {' · '.join(sorted(orgs))}",
+        })
+    for tid, tens in bien_the.items():
+        canh_bao.append({
+            "row": None, "kind": "gop_bien_the_ten",
+            "detail": " · ".join(sorted(tens)),
         })
 
     # --- Hoc phan: gop theo (ma, ten) ---
@@ -915,9 +1813,15 @@ def _build_manual_data_from_rows(rows):
     # --- Lop ---
     for idx, r in enumerate(rows):
         tkey = (f"__chua_phan_cong_{idx}" if r.get("chuaPhanCong")
-                else " ".join(r["teacherName"].split()).lower())
+                else fate_import.khoa_gv(r["teacherName"]))
         body = {
-            "teacherId": teacher_ids[tkey],
+            # Ca nhom trong MOT danh sach, vai tro ngang nhau (nguoi dau la nguoi
+            # ghi dau tien trong o ten cua file).
+            "teacherIds": [teacher_ids[tkey]] + [
+                teacher_ids[fate_import.khoa_gv(n)]
+                for n in (r.get("coTeacherNames") or [])
+                if fate_import.khoa_gv(n) in teacher_ids
+            ],
             "courseId": course_ids[(r["courseCode"].strip().lower(), r["courseName"].strip().lower())],
             "duration": r["duration"] or data["params"]["duration"],
             "classCode": r["classCode"], "program": r["program"],
@@ -944,14 +1848,27 @@ def _build_manual_data_from_rows(rows):
             loi.append({"row": r["excelRow"], "reason": err})
             continue
         if time_info is None and not r["autoSchedule"] and r["day"] is not None:
-            max_label = _DAY_LABELS_VN[sc.max_day_index(teacher["type"])]
+            # Chi con MOT ly do lam mat gio: tiet vo ly (> MAX_TIET). Ngay ngoai quy
+            # dinh khong con bi bo gio nua - xem _parse_class_time.
+            canh_bao.append({
+                "row": r["excelRow"], "kind": "gio_ngoai_pham_vi_tiet",
+                "detail": (
+                    f"“{r['classCode'] or r['courseName'][:30]}” — tiết {r['periodStart']}-"
+                    f"{r['periodEnd']} không thể là giờ học thật — đã bỏ giờ, chuyển sang "
+                    f"“để hệ thống tự xếp”"
+                ),
+            })
+        elif time_info is not None and time_info["day"] > sc.max_day_index(teacher["type"]):
+            # Gio da chot -> GIU NGUYEN, nhung phai noi ra: day la ngoai le so voi
+            # quy dinh (thinh giang toi Thu 7, co huu toi Thu 6).
             loai = "Thỉnh giảng" if teacher["type"] == "GUEST" else "Cơ hữu"
             canh_bao.append({
-                "row": r["excelRow"], "kind": "vuot_quy_dinh_ngay",
+                "row": r["excelRow"], "kind": "ngay_ngoai_quy_dinh_giu_nguyen",
                 "detail": (
-                    f"{loai} \"{r['teacherName']}\" — {_DAY_LABELS_VN[r['day']]} vượt quy định "
-                    f"({loai} chỉ tới {max_label}) — đã bỏ giờ cố định, chuyển sang "
-                    f"\"để hệ thống tự xếp\", cần gán lại giờ"
+                    f"{loai} “{r['teacherName']}” dạy {_DAY_LABELS_VN[time_info['day']]} — "
+                    f"ngoài quy định ({loai} chỉ tới "
+                    f"{_DAY_LABELS_VN[sc.max_day_index(teacher['type'])]}), "
+                    f"nhưng GIỮ NGUYÊN vì là giờ đã chốt trong file"
                 ),
             })
         sid = len(data["sections"])
@@ -963,6 +1880,10 @@ def _build_manual_data_from_rows(rows):
     data["num_resident"] = sum(1 for t in data["teachers"].values() if t["type"] == "RESIDENT")
     data["num_guest"] = len(data["teachers"]) - data["num_resident"]
     data["num_time_assumed"] = sum(1 for s in data["sections"].values() if s.get("time_assumed"))
+    # Lop dang xep theo "GV chua khai gio ranh nen coi nhu ranh ca tuan" - dem rieng
+    # de man hinh noi ro day la GIA DINH, khong phai gio GV da xac nhan.
+    data["num_availability_assumed"] = sum(
+        1 for s in data["sections"].values() if s.get("availability_assumed"))
     return data, loi, canh_bao
 
 
@@ -981,15 +1902,22 @@ _NHAN_LUU_Y = {
                       "như trong file (hoặc để trống) để gán sau",
     "thieu_ten_hoc_phan": "Dòng không có Tên học phần ở bất kỳ dòng nào phía trên — "
                           "đặt tạm tên theo mã lớp, sửa lại trong form",
-    "dong_giang": "Ô ghi nhiều giảng viên đồng giảng — chỉ lấy người đầu làm GV chính, "
-                  "những người còn lại cần thêm bằng tay",
+    "dong_giang": "Ô ghi nhiều giảng viên đồng giảng — TẤT CẢ đều được ràng buộc lịch cho "
+                  "lớp này (người đầu là GV chính để hiển thị); email/SĐT chia theo vị trí "
+                  "khi số lượng khớp số người, học hàm chỉ gán cho người đầu",
     "nhieu_buoi": "Dòng ghi nhiều buổi trong tuần — tách thành nhiều lớp cùng mã lớp",
     "gop_giang_vien": "Cùng một họ tên nhưng ghi nhiều đơn vị công tác khác nhau — "
                       "đã gộp làm một người và lấy đơn vị ghi đầu tiên",
-    "lech_nguon_gio": "2 nguồn giờ (cột text và cột Thứ/Tiết) ghi khác nhau — xem mục "
-                      "\"Xác nhận giờ học\" ở trên để chọn lại nguồn đúng cho từng lớp",
-    "vuot_quy_dinh_ngay": "Giờ trong file vượt quy định (thỉnh giảng tới Thứ 7, cơ hữu tới "
-                          "Thứ 6) — đã bỏ giờ cố định, chuyển \"để hệ thống tự xếp\", cần gán lại giờ",
+    "gop_bien_the_ten": "Cùng một người nhưng file ghi tên nhiều kiểu (có/không học hàm, "
+                        "khác dấu cách, có số thứ tự) — đã gộp làm một người; nên rà lại "
+                        "để chắc không phải hai người khác nhau",
+    "ngay_ngoai_quy_dinh_giu_nguyen": "Dạy Thứ 7/Chủ nhật, ngoài quy định (thỉnh giảng tới "
+                                      "Thứ 7, cơ hữu tới Thứ 6) — GIỮ NGUYÊN vì là giờ đã "
+                                      "chốt trong file, hệ thống không tự đổi",
+    "gio_ngoai_pham_vi_tiet": "Tiết trong file quá lớn, không thể là giờ học thật — đã bỏ giờ, "
+                              "chuyển \"để hệ thống tự xếp\" (lớp vẫn được nạp đủ)",
+    "noi_so_tiet": "File có giờ vượt số tiết/ngày mặc định — đã nới số tiết/ngày cho cả thời "
+                   "khoá biểu để giữ đúng giờ trong file",
 }
 
 
@@ -1016,32 +1944,15 @@ def _gom_theo_loai(items, nhan_map):
 
 
 def _build_import_preview_response(result, data, loi, canh_bao_gv, file_name):
-    """Dung chung cho preview VA apply-time-fix (ket qua sau khi giao vu doi lai
-    nguon gio 1 dong) - tranh 2 endpoint tu dung 2 cach tinh summary/warningGroups
-    ma lech nhau.
-
-    "lech_nguon_gio" duoc DUNG LAI tu result['timeReviews'] (co the vua doi
-    'chosen' o apply-time-fix) chu khong dung warnings tinh san luc doc file -
-    neu khong, chu canh bao se noi ve lua chon CU sau khi giao vu vua sua."""
+    """Gop ket qua doc file thanh BAN XEM TRUOC cho UI."""
     summary = fate_import.summarize(result)
     summary["soLopDungDuoc"] = len(data["sections"])
     summary["soGiangVien"] = len(data["teachers"])
     summary["soHocPhan"] = len(data["courses"])
 
-    other_warnings = [w for w in result["warnings"] if w.get("kind") != "lech_nguon_gio"]
-    lech_gio_warnings = [
-        {
-            "row": r["excelRow"], "kind": "lech_nguon_gio",
-            "detail": (
-                f"cột text: {r['textLabel']}; cột cấu trúc: {r['structuredLabel']} — đang dùng "
-                f"{'cột cấu trúc' if r['chosen'] == 'structured' else 'cột text'}"
-                + (" (đã tự phát hiện trùng lặp)" if r["certain"] else " (mặc định — cần xem lại)")
-            ),
-        }
-        for r in result["timeReviews"]
-    ]
-    all_warnings = other_warnings + lech_gio_warnings
+    all_warnings = result["warnings"]
     summary["soCanhBao"] = len(all_warnings) + len(canh_bao_gv)
+    data_issues = fate_audit.kiem_tra(result["rows"], data["teachers"])
 
     return {
         "fileName": file_name,
@@ -1051,12 +1962,12 @@ def _build_import_preview_response(result, data, loi, canh_bao_gv, file_name):
         # kieu bao nhieu dong.
         "skippedGroups": _gom_theo_loai(result["skipped"], _NHAN_BO_QUA),
         "warningGroups": _gom_theo_loai(all_warnings + canh_bao_gv, _NHAN_LUU_Y),
+        # LOI TRONG CHINH FILE (khac warningGroups - xem fate_audit): ma lop dung
+        # cho 2 hoc phan, ten khac dau thanh 2 hoc phan, mot email 2 nguoi, dong
+        # nhap trung... Import khong sai o dau ca, nhung du lieu ra khong dung y.
+        "dataIssues": data_issues,
+        "dataIssuesSummary": fate_audit.tom_tat(data_issues),
         "errors": loi[:20],
-        # "Buoc 1: chuan hoa du lieu" - moi dong 2 nguon gio lech nhau, giao vu
-        # xem/doi lai source truoc khi nap chinh thuc (buoc 2, xem
-        # api_manual_import_apply_time_fix). Sap certain=False (mo ho, can xem
-        # gap) len truoc de giao vu thay ngay viec can lam.
-        "timeReviews": sorted(result["timeReviews"], key=lambda r: r["certain"]),
         "sampleRows": [
             {
                 "excelRow": r["excelRow"], "courseCode": r["courseCode"],
@@ -1091,67 +2002,37 @@ def api_manual_import_preview():
         "data": data,
         "fileName": f.filename,
         "sheet": result["sheet"],
-        # Giu nguyen ban doc goc (rows/warnings/skipped/timeReviews) de
-        # apply-time-fix sua tren DUNG cac dong nay roi dung lai
-        # _build_manual_data_from_rows(), khong phai doc lai file.
+        # Giu nguyen ban doc goc (rows/warnings/skipped) de cac endpoint sau
+        # (vd tai loi du lieu ra .xlsx) dung lai, khong phai doc lai file.
         "result": result,
     }
 
     return jsonify(_build_import_preview_response(result, data, loi, canh_bao_gv, f.filename))
 
 
-@app.post("/api/manual/import/apply-time-fix")
-def api_manual_import_apply_time_fix():
-    """'Bước 1: chuẩn hoá dữ liệu' - giao vụ xem từng lớp bị 2 nguồn giờ (cột
-    text tự do / cột Thứ-Tiết đầu-Tiết cuối) ghi khác nhau
-    (STATE['import_pending']['result']['timeReviews']) và CHỌN lại nguồn đúng,
-    TRƯỚC khi nạp chính thức (bước 2: POST .../commit). Sửa trực tiếp trên bản
-    ghi dòng (result['rows']) rồi DÙNG LẠI _build_manual_data_from_rows() - giữ
-    đúng luật sinh sections/GV/học phần như lúc đọc file lần đầu, không viết
-    lại logic riêng."""
+@app.get("/api/manual/import/issues.xlsx")
+def api_manual_import_issues_xlsx():
+    """Tai danh sach loi du lieu cua ban xem truoc ra .xlsx - de gui khoa/CTDT sua
+    o FILE GOC (chi ho sua duoc; xem fate_audit). Doc-only, khong doi STATE."""
     pending = STATE.get("import_pending")
     if not pending or not pending.get("result"):
         return jsonify({"error": "Chưa có bản xem trước. Hãy tải file lên trước."}), 400
-
-    body = request.get_json(force=True)
-    try:
-        excel_row = int(body["excelRow"])
-    except (KeyError, TypeError, ValueError):
-        return jsonify({"error": "Thiếu hoặc sai excelRow."}), 400
-    source = body.get("source")
-    if source not in ("text", "structured"):
-        return jsonify({"error": "source phải là 'text' hoặc 'structured'."}), 400
-
-    result = pending["result"]
-    review = next((r for r in result["timeReviews"] if r["excelRow"] == excel_row), None)
-    if review is None:
-        return jsonify({"error": f"Không tìm thấy dòng cần sửa (excelRow={excel_row})."}), 400
-
-    review["chosen"] = source
-    chosen_time = review[source]
-    duration = chosen_time["periodEnd"] - chosen_time["periodStart"] + 1
-
-    matched = 0
-    for r in result["rows"]:
-        if r["excelRow"] == excel_row:
-            r["day"] = chosen_time["day"]
-            r["periodStart"] = chosen_time["periodStart"]
-            r["periodEnd"] = chosen_time["periodEnd"]
-            r["autoSchedule"] = False
-            r["duration"] = duration
-            matched += 1
-    if matched == 0:
-        return jsonify({"error": f"Không tìm thấy dòng dữ liệu tương ứng (excelRow={excel_row})."}), 400
-
-    data, loi, canh_bao_gv = _build_manual_data_from_rows(result["rows"])
-    pending["data"] = data
-
-    return jsonify(_build_import_preview_response(result, data, loi, canh_bao_gv, pending["fileName"]))
+    nhom = fate_audit.kiem_tra(pending["result"]["rows"], pending["data"]["teachers"])
+    buf = fate_export.build_issues_workbook(nhom, pending.get("fileName") or "")
+    ten = (pending.get("fileName") or "file").rsplit(".", 1)[0]
+    return send_file(
+        buf, as_attachment=True, download_name=f"Loi-du-lieu.{ten}.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 @app.post("/api/manual/import/commit")
 def api_manual_import_commit():
-    """Ghi ban xem truoc vao STATE - XOA HET du lieu dang co (da xac nhan o UI).
+    """Ghi ban xem truoc vao STATE. Body JSON tuy chon: {"mode": "replace"|"merge"}.
+
+    - "replace" (mac dinh, hanh vi cu): XOA HET du lieu dang co.
+    - "merge": GOP THEM vao du lieu dang co - de nap file cua khoa nay roi nap tiep
+      file cua khoa khac, hoac nap bo sung dot 2 ma khong mat cong da sua.
 
     Dat sourceLabel = "Nhap lieu thu cong" chu KHONG phai ten file: form
     "Du lieu hoc phan" chi mo khoa sua khi thay nhan do (xem isManualMode ben
@@ -1161,20 +2042,52 @@ def api_manual_import_commit():
     if not pending:
         return jsonify({"error": "Chưa có bản xem trước. Hãy tải file lên trước."}), 400
 
-    STATE["data"] = pending["data"]
-    STATE["extra"] = {
-        "isRealData": False,
-        "sourceLabel": "Nhập liệu thủ công",
-        "numTimeAssumed": pending["data"].get("num_time_assumed", 0),
-        "importedFrom": f"{pending['fileName']} (sheet '{pending['sheet']}')",
-    }
+    body = request.get_json(silent=True) or {}
+    mode = body.get("mode", "replace")
+    if mode not in ("replace", "merge"):
+        return jsonify({"error": "mode phải là 'replace' hoặc 'merge'."}), 400
+
+    nguon = f"{pending['fileName']} (sheet '{pending['sheet']}')"
+    if mode == "merge" and STATE["data"] is not None:
+        if STATE["extra"] and STATE["extra"].get("isRealData"):
+            return jsonify({"error": "Chỉ gộp thêm được vào dữ liệu nhập tay, "
+                                     "không gộp vào bộ 'Dữ liệu thật'."}), 400
+        gop = _gop_manual_data(STATE["data"], pending["data"])
+        cu = (STATE["extra"] or {}).get("importedFrom")
+        STATE["extra"] = {
+            "isRealData": False,
+            "sourceLabel": "Nhập liệu thủ công",
+            "numTimeAssumed": STATE["data"].get("num_time_assumed", 0),
+            "importedFrom": f"{cu} + {nguon}" if cu else nguon,
+        }
+    else:
+        gop = None
+        STATE["data"] = pending["data"]
+        STATE["extra"] = {
+            "isRealData": False,
+            "sourceLabel": "Nhập liệu thủ công",
+            "numTimeAssumed": pending["data"].get("num_time_assumed", 0),
+            "importedFrom": nguon,
+        }
+
+    # Ket qua giai cu khong con dung voi bo du lieu moi (ke ca khi gop them: co
+    # lop moi chen vao, phong/gio phai tinh lai).
     STATE["guestResult"] = None
     STATE["residentResult"] = None
-    STATE["overrides"] = {}
     STATE["import_pending"] = None
+    # ...nhung LICH BAN DAU tu cac gio da chot trong file thi hien duoc ngay, va
+    # ghim san de hai buoc giai khong lam xe dich (xem _dat_lich_ban_dau).
+    _dat_lich_ban_dau(STATE["data"], nguon)
 
     _save_snapshot()
-    return jsonify(_build_data_response(STATE["data"], STATE["extra"]))
+    resp = _build_data_response(STATE["data"], STATE["extra"])
+    # Tra kem LICH BAN DAU de man "Thoi khoa bieu" hien duoc ngay sau khi nap,
+    # khong phai tai lai trang.
+    resp["guestResult"] = STATE["guestResult"]
+    resp["residentResult"] = STATE["residentResult"]
+    if gop is not None:
+        resp["mergeReport"] = gop
+    return jsonify(resp)
 
 
 def _parse_availability_slots(data, body):
@@ -1215,10 +2128,16 @@ def api_manual_clear_times():
         return jsonify({"error": "sectionIds phải là danh sách số nguyên."}), 400
 
     cleared = 0
+    bo_qua_da_chot = 0
     for sid in section_ids:
         s = data["sections"].get(sid)
         teacher = data["teachers"].get(s["teacher_id"]) if s else None
         if s is None or teacher is None:
+            continue
+        # Xoa gio hang loat KHONG duoc pha mon da chot: nut nay xoa theo bo loc
+        # dang hien nen rat de quet trung vao mon da cam ket voi giang vien.
+        if _khoa_vi_da_chot(data, sid):
+            bo_qua_da_chot += 1
             continue
         _apply_section_time(data, sid, teacher, s["duration"], None)
         # Gio cu khong con - "Trang thai lich" (tu Luu thoi khoa bieu) da het
@@ -1229,6 +2148,7 @@ def api_manual_clear_times():
     _save_snapshot()
     resp = _build_data_response(data, STATE.get("extra"))
     resp["clearedCount"] = cleared
+    resp["skippedChotCount"] = bo_qua_da_chot
     return jsonify(resp)
 
 
@@ -1420,10 +2340,52 @@ def api_manual_add_section():
     return jsonify(_build_data_response(data, STATE.get("extra")))
 
 
+def _khoa_vi_da_chot(data, section_id, time_info=_KHONG_TRUYEN):
+    """Loi (str) neu thao tac nay dung vao GIO cua mot lop thuoc hoc phan DA CHOT -
+    hoac None.
+
+    Chot lich la mot cam ket voi giang vien; sua gio le tren bang sau do lam ban
+    chinh thuc va ban da bao cho GV lech nhau ma khong ai thay. Muon doi gio thi
+    phai BO CHOT truoc - mot thao tac co y thuc, co ghi lai.
+
+    KHOA DUNG PHAN GIO, khong khoa ca ban ghi: sau khi nhap file van con phai sua
+    ma lop sai, ten GV thieu, email, dia diem... Chan tat ca thi mon da chot thanh
+    bat kha xam pham va giao vu het duong don du lieu. Truyen `time_info` (dang ma
+    _validate_section_body tra ve) de so: gio KHONG doi thi cho qua.
+    """
+    s = data["sections"].get(section_id)
+    if s is None:
+        return None
+    hp = data.get("courses", {}).get(s.get("course_id")) or {}
+    chot = hp.get("chot")
+    if not chot:
+        return None
+    if time_info is not _KHONG_TRUYEN and not _gio_doi(s, time_info):
+        return None
+    return (f"Học phần “{hp.get('name') or ''}” đã chốt lịch "
+            f"({chot.get('by')}, {(chot.get('at') or '')[:16].replace('T', ' ')}). "
+            f"Bỏ chốt học phần trước khi sửa giờ.")
+
+
+def _gio_doi(s, time_info):
+    """Yeu cau nay co lam DOI gio cua lop khong? time_info=None nghia la "de he
+    thong tu xep" - voi lop dang co gio chot thi do CUNG la mot thay doi."""
+    if time_info is None:
+        return not s.get("time_assumed")
+    return (bool(s.get("time_assumed"))
+            or s.get("day") != time_info["day"]
+            or s.get("period_start") != time_info["period_start"]
+            or s.get("period_end") != time_info["period_end"])
+
+
 @app.patch("/api/manual/section/<int:section_id>")
 def api_manual_update_section(section_id):
     """Sua 1 lop da nhap - body cung dinh dang day du nhu POST /api/manual/section
-    (khong merge tung phan, xem ly do o _validate_section_body)."""
+    (khong merge tung phan, xem ly do o _validate_section_body).
+
+    Luu y: `teacherIds` phai gui DAY DU ca danh sach. Gui thieu = nhung nguoi con
+    lai bi bo khoi lop - dung y nghia "gui du ca form", nhung de sot thi mat du
+    lieu am tham."""
     if STATE["data"] is None:
         return jsonify({"error": "Chưa có dữ liệu."}), 400
     data = STATE["data"]
@@ -1434,6 +2396,12 @@ def api_manual_update_section(section_id):
     fields, teacher, duration, time_info, err = _validate_section_body(data, body)
     if err:
         return jsonify({"error": err}), 400
+
+    # Chan SAU khi validate: chi tu choi khi yeu cau nay lam DOI gio cua mot lop
+    # thuoc hoc phan da chot. Sua ten GV/email/dia diem... van cho qua.
+    khoa = _khoa_vi_da_chot(data, section_id, time_info)
+    if khoa:
+        return jsonify({"error": khoa, "locked": True}), 409
 
     data["sections"][section_id].update(fields)
     _apply_section_time(data, section_id, teacher, duration, time_info)
@@ -1461,6 +2429,7 @@ def api_manual_delete_section(section_id):
     if section_id in data["pending_section_ids"]:
         data["pending_section_ids"].remove(section_id)
     STATE["overrides"].pop(section_id, None)
+    STATE["bo_ghim"].discard(section_id)
 
     for result in (STATE["guestResult"], STATE["residentResult"]):
         if not result:
@@ -1503,7 +2472,8 @@ def api_solve_guest():
     if STATE["data"] is None:
         return jsonify({"error": "Chua sinh du lieu. Goi /api/generate truoc."}), 400
     data = STATE["data"]
-    result = _solve_guest_with_overrides(data)
+    with _tam_bo_ghim(data):
+        result = _solve_guest_with_overrides(data)
     _attach_override_metadata(data, result, "GUEST")
     STATE["guestResult"] = result
     STATE["residentResult"] = None
@@ -1512,11 +2482,15 @@ def api_solve_guest():
 
 @app.post("/api/solve-resident")
 def api_solve_resident():
-    if STATE["guestResult"] is None:
-        return jsonify({"error": "Can chay Giai doan 1 (thinh giang) truoc."}), 400
+    # "initial" = lich ban dau doc tu file, CHUA phai ket qua giai Giai doan 1
+    # (xem _lich_ban_dau) - van phai chay buoc 2 truoc.
+    if STATE["guestResult"] is None or STATE["guestResult"].get("initial"):
+        return jsonify({"error": "Cần chạy Giai đoạn 1 (thỉnh giảng) trước."}), 400
     data = STATE["data"]
-    forbidden = _forbidden_from_resident_overrides(data)
-    result = sc.solve_resident_phase(data, STATE["guestResult"]["lessons"], forbidden)
+    with _tam_bo_ghim(data):
+        result = sc.solve_resident_phase(data, STATE["guestResult"]["lessons"],
+                                         ghim_tay=_ghim_tay_o_giai_doan_2(data),
+                                         bo_ghim=STATE["bo_ghim"])
     _attach_override_metadata(data, result, "RESIDENT")
     STATE["residentResult"] = result
     return jsonify(result)
@@ -1528,7 +2502,7 @@ def api_move_lesson():
     trung GV/het phong (dong 2 - cho phep vi pham rang buoc), nhung PHAI ghi ly
     do neu o do dang co van de. Buoi duoc GHIM (dong 1): luu vao STATE['overrides']
     de lan 'Giai lai' ke tiep CP-SAT chi con dung 1 lua chon la giu buoi nay o
-    day (xem _solve_guest_with_overrides/_forbidden_from_resident_overrides).
+    day (xem _solve_guest_with_overrides/_ghim_tay_o_giai_doan_2).
     Ngay sau khi luu, PATCH ngay ket qua dang cache (STATE['guestResult'] hoac
     ['residentResult']) de luoi hien vi tri moi TUC THI, khong phai cho giai lai
     moi thay doi tren man hinh.
@@ -1544,6 +2518,12 @@ def api_move_lesson():
     except (KeyError, TypeError, ValueError):
         return jsonify({"error": "Thieu hoac sai sectionId/slot."}), 400
     reason = (body.get("reason") or "").strip() or None
+    # Mon da chot lich = da cam ket voi giang vien -> khong keo-tha di cho khac
+    # duoc nua. Chan o day chu khong chi an nut o frontend: giao vu co the dang
+    # mo hai tab, ban luoi ben kia chua biet mon vua duoc chot.
+    khoa = _khoa_vi_da_chot(data, section_id)
+    if khoa:
+        return jsonify({"error": khoa, "locked": True}), 409
 
     s = data["sections"].get(section_id)
     if not s:
@@ -1566,6 +2546,8 @@ def api_move_lesson():
         }), 409
 
     STATE["overrides"][section_id] = {"slot": slot, "reason": reason, "problem": conflict}
+    # Ghim tay de len tren moi thu -> khong con la lop "de he thong xep lai".
+    STATE["bo_ghim"].discard(section_id)
 
     kind = s["teacher_type"]
     result = STATE["guestResult"] if kind == "GUEST" else STATE["residentResult"]
@@ -1610,7 +2592,15 @@ def api_clear_override():
     data = STATE["data"]
     body = request.get_json(force=True)
     section_id = int(body["sectionId"])
+    khoa = _khoa_vi_da_chot(data, section_id)
+    if khoa:
+        return jsonify({"error": khoa, "locked": True}), 409
     STATE["overrides"].pop(section_id, None)
+    # Xoa khoi overrides thoi la CHUA DU voi lop co gio chot trong file: solver van
+    # ghim theo original_slot/submissions nen lan giai sau lop nam nguyen cho cu.
+    # Ghi vao STATE['bo_ghim'] de ca hai duong ghim cung tha lop nay ra.
+    if section_id in data["sections"]:
+        STATE["bo_ghim"].add(section_id)
 
     _attach_override_metadata(data, STATE["guestResult"], "GUEST")
     _attach_override_metadata(data, STATE["residentResult"], "RESIDENT")
@@ -1623,7 +2613,7 @@ def api_clear_override():
 
 @app.get("/api/manual/export")
 def api_manual_export():
-    """Xuat bang 'Du lieu hoc phan' hien co ra .xlsx dung khuon LAYOUTS['FATE']
+    """Xuat bang 'Du lieu hoc phan' hien co ra .xlsx dung khuon FATE chuan
     (fate_export.py) - de dung lam van ban chinh thuc va nap lai duoc o ky sau."""
     if STATE["data"] is None:
         return jsonify({"error": "Chưa có dữ liệu."}), 400
@@ -1635,6 +2625,154 @@ def api_manual_export():
         buf, as_attachment=True, download_name=filename,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
+def _slot_dang_hien(data, sid):
+    """Slot cua mot lop DANG HIEN tren luoi Thoi khoa bieu, theo dung thu tu uu
+    tien ma man do dung: ghim tay > ket qua GD2 > ket qua GD1 > gio da ghi san o
+    lop. None = lop nay chua o dau ca."""
+    ov = STATE["overrides"].get(sid)
+    if ov and ov.get("slot") is not None:
+        return ov["slot"]
+    for res in (STATE.get("residentResult"), STATE.get("guestResult")):
+        for l in (res or {}).get("lessons") or []:
+            if l["id"] == sid:
+                return l["slot"]
+    if not (data["sections"][sid].get("time_assumed")):
+        return data["sections"][sid].get("original_slot")
+    return None
+
+
+def _lop_cua_hoc_phan(data, course_id):
+    return [s for s in data["sections"].values() if s.get("course_id") == course_id]
+
+
+def _chot_hoc_phan(data, course_id, nguoi, ghi_chu):
+    """CHOT LICH cho ca mot hoc phan: moi lop cua no lay gio dang hien tren luoi,
+    ghi thanh gio chinh thuc VA ghim lai.
+
+    Khac "Luu thoi khoa bieu" (chot MOT LAN cho toan bo 343 lop): thuc te giao vu
+    chot dan tung mon - mon nao thong nhat xong voi giang vien thi khoa lai, cac
+    mon con lai van de he thong xep tiep ma khong lam xe dich mon da chot.
+
+    Ghim qua STATE['overrides'] chu khong chi ghi gio vao lop: overrides la co che
+    manh nhat o CA HAI pha (xem _solve_guest_with_overrides/_ghim_tay_o_giai_doan_2)
+    nen giai lai bao nhieu lan mon nay cung dung yen.
+
+    Luu `truoc` = trang thai gio TRUOC khi chot cua tung lop, de "bo chot" tra
+    lai dung nhu cu: lop von co gio chot trong file thi giu gio do, lop von chua
+    co gio thi ve lai "de he thong tu xep" - khong the doan lai duoc neu khong ghi.
+    """
+    lop = _lop_cua_hoc_phan(data, course_id)
+    if not lop:
+        return None, "Học phần này chưa có lớp nào."
+
+    slots_per_day = data["params"]["slotsPerDay"]
+    thieu, gan = [], []
+    for s in lop:
+        slot = _slot_dang_hien(data, s["id"])
+        if slot is None:
+            thieu.append(s)
+            continue
+        gan.append((s, slot))
+    if thieu:
+        return None, {
+            "error": ("Chưa chốt được: %d lớp của học phần này chưa có giờ. "
+                      "Hãy xếp hoặc nhập giờ cho chúng trước." % len(thieu)),
+            "missing": [{"sectionId": s["id"], "classCode": s.get("class_code"),
+                         "courseName": s.get("course_name")} for s in thieu],
+        }
+
+    truoc = {}
+    for s, slot in gan:
+        truoc[str(s["id"])] = {
+            "day": s.get("day"), "periodStart": s.get("period_start"),
+            "periodEnd": s.get("period_end"), "timeAssumed": bool(s.get("time_assumed")),
+        }
+        day, period0 = divmod(slot, slots_per_day)
+        teacher = data["teachers"][s["teacher_id"]]
+        _apply_section_time(data, s["id"], teacher, s["duration"], {
+            "day": day, "period_start": period0 + 1,
+            "period_end": period0 + s["duration"],
+        })
+        STATE["overrides"][s["id"]] = {
+            "slot": slot, "reason": "Đã chốt lịch học phần", "problem": None,
+        }
+        STATE["bo_ghim"].discard(s["id"])
+
+    data["courses"][course_id]["chot"] = {
+        "at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "by": (nguoi or "").strip() or "Giáo vụ",
+        "note": (ghi_chu or "").strip(),
+        "soLop": len(gan),
+        "truoc": truoc,
+    }
+    return len(gan), None
+
+
+def _bo_chot_hoc_phan(data, course_id):
+    """Mo lai mot hoc phan da chot: go ghim va TRA GIO VE dung trang thai truoc
+    khi chot (xem `truoc` trong _chot_hoc_phan). Lop von chua co gio quay lai
+    "de he thong tu xep"; lop von co gio chot tu file giu nguyen gio do."""
+    course = data["courses"][course_id]
+    chot = course.get("chot") or {}
+    truoc = chot.get("truoc") or {}
+    for s in _lop_cua_hoc_phan(data, course_id):
+        STATE["overrides"].pop(s["id"], None)
+        cu = truoc.get(str(s["id"]))
+        teacher = data["teachers"][s["teacher_id"]]
+        if cu is None or cu.get("timeAssumed") or cu.get("day") is None:
+            _apply_section_time(data, s["id"], teacher, s["duration"], None)
+            # Lop von chua co gio: phai noi ro "cho he thong xep lai", neu khong
+            # gio vua chot van con o original_slot va solver ghim theo no.
+            STATE["bo_ghim"].add(s["id"])
+        else:
+            _apply_section_time(data, s["id"], teacher, s["duration"], {
+                "day": cu["day"], "period_start": cu["periodStart"],
+                "period_end": cu["periodEnd"],
+            })
+            STATE["bo_ghim"].discard(s["id"])
+    course.pop("chot", None)
+
+
+@app.post("/api/manual/course/<int:course_id>/chot")
+def api_manual_chot_course(course_id):
+    """Chot lich giang day cho 1 hoc phan (moi lop cua no)."""
+    if STATE["data"] is None:
+        return jsonify({"error": "Chưa có dữ liệu."}), 400
+    data = STATE["data"]
+    if course_id not in data.get("courses", {}):
+        return jsonify({"error": f"Không tìm thấy học phần id={course_id}."}), 400
+    body = request.get_json(silent=True) or {}
+    so, err = _chot_hoc_phan(data, course_id, body.get("by"), body.get("note"))
+    if err:
+        return jsonify(err if isinstance(err, dict) else {"error": err}), 400
+    _attach_override_metadata(data, STATE["guestResult"], "GUEST")
+    _attach_override_metadata(data, STATE["residentResult"], "RESIDENT")
+    _save_snapshot()
+    resp = _build_data_response(data, STATE.get("extra"))
+    resp["chotCount"] = so
+    resp["courseName"] = data["courses"][course_id].get("name")
+    return jsonify(resp)
+
+
+@app.delete("/api/manual/course/<int:course_id>/chot")
+def api_manual_bo_chot_course(course_id):
+    """Bo chot 1 hoc phan - tra gio ve trang thai truoc khi chot."""
+    if STATE["data"] is None:
+        return jsonify({"error": "Chưa có dữ liệu."}), 400
+    data = STATE["data"]
+    if course_id not in data.get("courses", {}):
+        return jsonify({"error": f"Không tìm thấy học phần id={course_id}."}), 400
+    if not data["courses"][course_id].get("chot"):
+        return jsonify({"error": "Học phần này chưa được chốt."}), 400
+    _bo_chot_hoc_phan(data, course_id)
+    _attach_override_metadata(data, STATE["guestResult"], "GUEST")
+    _attach_override_metadata(data, STATE["residentResult"], "RESIDENT")
+    _save_snapshot()
+    resp = _build_data_response(data, STATE.get("extra"))
+    resp["courseName"] = data["courses"][course_id].get("name")
+    return jsonify(resp)
 
 
 @app.post("/api/manual/save-schedule")

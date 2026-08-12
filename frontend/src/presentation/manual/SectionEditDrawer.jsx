@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CopyPlus, Plus, TriangleAlert, Trash2 } from "lucide-react";
+import { CopyPlus, Lock, Plus, TriangleAlert, Trash2, X } from "lucide-react";
 import { useAppData } from "../../context/AppDataContext";
 import ClassTimeSlotPicker from "./ClassTimeSlotPicker";
 import { FormRow } from "@/components/shared/form-row";
@@ -21,7 +21,7 @@ function suggestTeacherType(org) {
 
 function emptyForm() {
   return {
-    teacherId: "", courseId: "", classCode: "", program: "",
+    teacherIds: [""], courseId: "", classCode: "", program: "",
     ltCredits: "", thCredits: "", cohort: "", expectedStudents: "",
     duration: "2", autoSchedule: true, day: null, periodStart: null, periodEnd: null,
     location: "", teachingMode: "", language: "", otherRequirements: "", notes: "",
@@ -32,7 +32,9 @@ function emptyForm() {
 
 function formFromClass(c) {
   return {
-    teacherId: String(c.teacherId), courseId: c.courseId != null ? String(c.courseId) : "",
+    // MOI giang vien cua lop, vai tro ngang nhau (khong co "GV chinh").
+    teacherIds: (c.teacherIds?.length ? c.teacherIds : [c.teacherId]).map(String),
+    courseId: c.courseId != null ? String(c.courseId) : "",
     classCode: c.classCode || "", program: c.programName || "",
     ltCredits: c.ltCredits ?? "", thCredits: c.thCredits ?? "",
     cohort: c.cohort || "", expectedStudents: c.expectedStudents ?? "",
@@ -50,7 +52,9 @@ function formFromClass(c) {
 // data.classes). Tu goi useAppData() truc tiep (khong qua props tu trang cha) vi
 // day la 1 "man con" kha doc lap voi nhieu hanh dong rieng (them GV/hoc phan
 // nhanh, luu, xoa) - giam prop-drilling qua ManualEntryPage.
-export default function SectionEditDrawer({ data, section, onClose, onDuplicated }) {
+// onOpenTeacher: mo ngan cua MOT giang vien trong lop (de sua thong tin/khai gio
+// co the day) - trang cha giu state ngan nao dang mo nen phai di qua props.
+export default function SectionEditDrawer({ data, section, onClose, onDuplicated, onOpenTeacher }) {
   const { loading, addManualTeacher, addManualCourse, addManualSection, updateManualSection, deleteManualSection } = useAppData();
   const [form, setForm] = useState(section ? formFromClass(section) : emptyForm());
   const [error, setError] = useState(null);
@@ -77,7 +81,6 @@ export default function SectionEditDrawer({ data, section, onClose, onDuplicated
   const courses = data?.courses || [];
   const numDays = data?.numDays ?? 7;
   const slotsPerDay = data?.slotsPerDay ?? 12;
-  const selectedTeacher = teachers.find((t) => String(t.id) === String(form.teacherId));
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
@@ -88,7 +91,14 @@ export default function SectionEditDrawer({ data, section, onClose, onDuplicated
       name: newTeacher.name.trim(), org: newTeacher.org.trim(), teacherType: newTeacher.teacherType,
     });
     const created = res.teachers[res.teachers.length - 1];
-    setForm((f) => ({ ...f, teacherId: String(created.id) }));
+    // GV vua tao vao dong dang trong dau tien, khong thi them dong moi.
+    setForm((f) => {
+      const i = f.teacherIds.findIndex((x) => !x);
+      const ids = [...f.teacherIds];
+      if (i >= 0) ids[i] = String(created.id);
+      else ids.push(String(created.id));
+      return { ...f, teacherIds: ids };
+    });
     setNewTeacher({ name: "", org: "", teacherType: "GUEST" });
     setShowAddTeacher(false);
   };
@@ -109,7 +119,7 @@ export default function SectionEditDrawer({ data, section, onClose, onDuplicated
   const handleSave = async (e) => {
     e.preventDefault();
     setError(null);
-    if (!form.teacherId) return setError("Chưa chọn giảng viên.");
+    if (!form.teacherIds.filter(Boolean).length) return setError("Chưa chọn giảng viên.");
     if (!form.courseId) return setError("Chưa chọn học phần.");
     if (!form.duration || Number(form.duration) <= 0) return setError("Số tiết mỗi buổi dạy phải > 0.");
     if (!form.autoSchedule && (form.day == null || form.periodStart == null)) {
@@ -117,7 +127,8 @@ export default function SectionEditDrawer({ data, section, onClose, onDuplicated
     }
 
     const payload = {
-      teacherId: Number(form.teacherId), courseId: Number(form.courseId),
+      teacherIds: form.teacherIds.filter(Boolean).map(Number),
+      courseId: Number(form.courseId),
       classCode: form.classCode.trim(), program: form.program.trim(),
       ltCredits: form.ltCredits === "" ? 0 : Number(form.ltCredits),
       thCredits: form.thCredits === "" ? 0 : Number(form.thCredits),
@@ -161,11 +172,12 @@ export default function SectionEditDrawer({ data, section, onClose, onDuplicated
   // de khoi phai go lai tu dau, rieng gio thi bat buoc chon lai cho buoi khac.
   const handleDuplicate = async () => {
     setError(null);
-    if (!form.teacherId || !form.courseId) {
+    if (!form.teacherIds.filter(Boolean).length || !form.courseId) {
       return setError("Cần chọn học phần và giảng viên trước khi nhân bản.");
     }
     const payload = {
-      teacherId: Number(form.teacherId), courseId: Number(form.courseId),
+      teacherIds: form.teacherIds.filter(Boolean).map(Number),
+      courseId: Number(form.courseId),
       classCode: form.classCode.trim(), program: form.program.trim(),
       ltCredits: form.ltCredits === "" ? 0 : Number(form.ltCredits),
       thCredits: form.thCredits === "" ? 0 : Number(form.thCredits),
@@ -231,6 +243,17 @@ export default function SectionEditDrawer({ data, section, onClose, onDuplicated
           {error && (
             <Notice tone="red" icon={TriangleAlert}>
               {error}
+            </Notice>
+          )}
+
+          {/* Hoc phan DA CHOT LICH: backend tu choi moi thay doi (409), nen phai
+              noi TRUOC chu khong de nguoi dung go xong ca form roi moi bao. */}
+          {section?.courseChot && (
+            <Notice tone="amber" icon={Lock}>
+              Học phần này <strong>đã chốt lịch</strong> ({section.courseChot.by},{" "}
+              {(section.courseChot.at || "").slice(0, 16).replace("T", " ")}
+              {section.courseChot.note ? ` — ${section.courseChot.note}` : ""}). Không sửa được
+              cho tới khi <strong>bỏ chốt</strong> học phần ở bảng “Dữ liệu học phần”.
             </Notice>
           )}
 
@@ -330,19 +353,79 @@ export default function SectionEditDrawer({ data, section, onClose, onDuplicated
             )}
           </DrawerSection>
 
-          <DrawerSection title="Giảng viên kỳ này">
-            <FormRow label="Giảng viên" required hint={selectedTeacher?.org || undefined}>
-              {(id) => (
-                <NativeSelect id={id} className="w-full" value={form.teacherId} onChange={set("teacherId")}>
-                  <option value="">— Chọn giảng viên —</option>
-                  {teachers.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name} · {t.type === "GUEST" ? "Thỉnh giảng" : "Cơ hữu"}
-                    </option>
-                  ))}
-                </NativeSelect>
-              )}
-            </FormRow>
+          <DrawerSection
+            title="Giảng viên kỳ này"
+            hint="Nhiều người cùng dạy thì thêm đủ — MỌI NGƯỜI VAI TRÒ NGANG NHAU, không có ai là “giảng viên chính”. Lớp chỉ xếp được vào giờ tất cả đều rảnh, và ai trong nhóm cũng bị tính trùng lịch."
+          >
+            {/* DANH SACH ngang hang, khong phai "1 GV chinh + tick dong giang".
+                Ban tick cu khong theo doi duoc: nguoi thu 2 tro di nam trong mot
+                hop tick dai, khong thay email/SDT/don vi cua ho, va nhin khong ra
+                lop dang co bao nhieu nguoi. Nay moi nguoi mot dong, doi/xoa tai
+                cho, kem nut mo ngan cua chinh nguoi do de khai gio co the day. */}
+            {form.teacherIds.map((tid, i) => {
+              const gv = teachers.find((t) => String(t.id) === String(tid));
+              return (
+                <div key={`${tid}-${i}`} className="flex items-start gap-2">
+                  <NativeSelect
+                    className="w-full"
+                    value={tid}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        teacherIds: f.teacherIds.map((x, k) => (k === i ? e.target.value : x)),
+                      }))
+                    }
+                  >
+                    <option value="">— Chọn giảng viên —</option>
+                    {teachers.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} · {t.type === "GUEST" ? "Thỉnh giảng" : "Cơ hữu"}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                  {gv && onOpenTeacher && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      title="Mở giảng viên này để sửa thông tin / khai giờ có thể dạy"
+                      onClick={() => onOpenTeacher(gv.id)}
+                    >
+                      Giờ dạy
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={form.teacherIds.length <= 1}
+                    title={form.teacherIds.length <= 1 ? "Lớp phải có ít nhất một giảng viên" : "Bỏ người này khỏi lớp"}
+                    onClick={() =>
+                      setForm((f) => ({ ...f, teacherIds: f.teacherIds.filter((_, k) => k !== i) }))
+                    }
+                  >
+                    <X className="size-4" />
+                  </Button>
+                </div>
+              );
+            })}
+            {form.teacherIds.map((tid) => teachers.find((t) => String(t.id) === String(tid))).map((gv, i) =>
+              gv ? (
+                <p key={`meta-${gv.id}-${i}`} className="text-muted-foreground text-xs">
+                  {gv.name}: {gv.org || "chưa có đơn vị"} · {gv.email || "chưa có email"} ·{" "}
+                  {gv.phone || "chưa có SĐT"}
+                </p>
+              ) : null,
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setForm((f) => ({ ...f, teacherIds: [...f.teacherIds, ""] }))}
+            >
+              <Plus className="size-4" />
+              Thêm giảng viên cùng dạy
+            </Button>
             {!showAddTeacher ? (
               <Button type="button" variant="ghost" size="sm" onClick={() => setShowAddTeacher(true)}>
                 <Plus className="size-4" />

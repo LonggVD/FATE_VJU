@@ -25,6 +25,10 @@ export function lessonToTimetableItem(lesson, { phase = null } = {}) {
     teacherType: lesson.teacherType,
     roomType: lesson.roomType,
     programLabel: lesson.programLabel,
+    // CTDT thanh phan + Khoa: bo loc/gom mau doc cai nay, khong boc tu chuoi nhan.
+    programIds: lesson.programIds ?? (lesson.program != null ? [lesson.program] : []),
+    programParts: lesson.programParts ?? [],
+    facultyName: lesson.facultyName ?? null,
     usedWindowLabel: lesson.usedWindowLabel,
     phase,
   };
@@ -42,8 +46,12 @@ export function mergeGuestAndResidentLessons(guestLessons = [], residentLessons 
 // theo teacherId, gop lai thanh 1 danh sach cho PeriodTimetable.
 export function teacherLookupBuild(teacherId, { data, guestResult, residentResult }) {
   const tid = Number(teacherId);
-  const guestLessons = (guestResult?.lessons || []).filter((l) => l.teacherId === tid);
-  const residentLessons = (residentResult?.lessons || []).filter((l) => l.teacherId === tid);
+  // Buoi DONG GIANG phai hien trong lich cua CA NHOM, khong chi GV chinh: nguoi
+  // thu 2 tro di van phai co mat that, va solver cung chan ho day cho khac gio
+  // do (teacherIds). Fallback teacherId cho ket qua giai cu chua co field nay.
+  const cuaGv = (l) => (l.teacherIds?.length ? l.teacherIds.includes(tid) : l.teacherId === tid);
+  const guestLessons = (guestResult?.lessons || []).filter(cuaGv);
+  const residentLessons = (residentResult?.lessons || []).filter(cuaGv);
   const submissions = (data?.submissions || []).filter((s) => s.teacherId === tid);
   const lessons = mergeGuestAndResidentLessons(guestLessons, residentLessons);
   return { lessons, submissions };
