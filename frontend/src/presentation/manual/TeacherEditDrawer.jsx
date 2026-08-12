@@ -207,14 +207,36 @@ export default function TeacherEditDrawer({ data, teacher, classes = [], onClose
           </DrawerSection>
         </form>
 
-        {teacherId != null && form.teacherType === "GUEST" && (
+        {/* Khai gio cho MOI giang vien (ca co huu) va co TAC DUNG THAT: da khai
+            thi chi xep trong khung do. Luoi con hien them cac o nguoi nay DANG
+            DAY (suy tu lop da chot gio) bang mau nhat - de nap file xong nhin ra
+            ngay "nguoi nay dang day T5 tiet 3-5", chu khong phai luoi trong tron.
+            Hai loai o KHONG tron lam mot: xem chu thich o SubmissionWindowGrid. */}
+        {teacherId != null && (
           <DrawerSection
             title="Giờ có thể dạy"
-            hint="Tick MỌI tiết giảng viên rảnh trong tuần (không chỉ tiết bắt đầu) — hệ thống tự tìm giờ bắt đầu hợp lệ cho từng lớp khi xếp lịch."
+            hint="Tick MỌI tiết giảng viên rảnh trong tuần (không chỉ tiết bắt đầu). ĐÃ KHAI = giới hạn cứng: các lớp chưa có giờ của giảng viên này chỉ được xếp trong khung đã tick. Chưa khai gì thì hệ thống tự do xếp cả tuần. Ô xanh nhạt là giờ đang dạy theo lớp đã chốt — chỉ để tham khảo, không phải khung đã khai."
           >
+            {(liveTeacher?.teachingSlots || []).length > 0 && (
+              <p className="text-muted-foreground text-xs">
+                Đang dạy {liveTeacher.teachingSlots.length} tiết theo các lớp đã chốt giờ.{" "}
+                <button
+                  type="button"
+                  className="font-medium underline"
+                  disabled={loading}
+                  onClick={() => handleSaveAvailability(
+                    [...new Set([...(liveTeacher.availabilitySlots || []), ...liveTeacher.teachingSlots])],
+                  )}
+                >
+                  Lấy các giờ đang dạy làm khung đã khai
+                </button>{" "}
+                — chỉ bấm nếu giảng viên CHỈ dạy được đúng những giờ đó.
+              </p>
+            )}
             <SubmissionWindowGrid
               numDays={numDays} slotsPerDay={slotsPerDay}
               initialSlots={liveTeacher?.availabilitySlots || []}
+              teachingSlots={liveTeacher?.teachingSlots || []}
               saving={loading}
               allowEmpty
               saveLabel={(n) => (n === 0 ? "Xóa hết giờ rảnh" : `Lưu ${n} khung giờ`)}

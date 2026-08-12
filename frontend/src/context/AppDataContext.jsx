@@ -168,6 +168,27 @@ export function AppDataProvider({ children }) {
 
   // Doc file va tra ve ban xem truoc. KHONG setData - buoc nay chua ghi gi ca,
   // nen cung khong duoc dong vao du lieu dang hien tren man.
+  // Chot lich cho 1 hoc phan (moi lop cua no) / bo chot. Tra ve ban data moi -
+  // gan thang de bang doi trang thai ngay, khong doi refresh.
+  const doChotCourse = useCallback((courseId, payload) => runAction(
+    () => scheduler.chotCourse(courseId, payload),
+    {
+      onSuccess: (res) => res.classes && setData(res),
+      messageFn: (res) =>
+        `Đã chốt lịch học phần "${res.courseName}" — ${res.chotCount} lớp, ghim cứng.`,
+      errorPrefix: "Không chốt được",
+    },
+  ), [runAction]);
+
+  const doBoChotCourse = useCallback((courseId) => runAction(
+    () => scheduler.boChotCourse(courseId),
+    {
+      onSuccess: (res) => res.classes && setData(res),
+      messageFn: (res) => `Đã bỏ chốt học phần "${res.courseName}" — giờ trả về trạng thái trước khi chốt.`,
+      errorPrefix: "Không bỏ chốt được",
+    },
+  ), [runAction]);
+
   const doImportPreview = useCallback((file) => runAction(
     () => scheduler.importPreview(file),
     {
@@ -295,7 +316,11 @@ export function AppDataProvider({ children }) {
     () => scheduler.clearManualTimes(sectionIds),
     {
       onSuccess: setData,
-      messageFn: (res) => `Đã xoá giờ của ${res.clearedCount} lớp — chuyển về "để hệ thống tự xếp".`,
+      messageFn: (res) =>
+        `Đã xoá giờ của ${res.clearedCount} lớp — chuyển về "để hệ thống tự xếp".` +
+        // Mon da chot khong bi xoa gio (backend chan) - phai noi ra, neu khong
+        // giao vu tuong da xoa het roi di lam viec khac.
+        (res.skippedChotCount ? ` Bỏ qua ${res.skippedChotCount} lớp thuộc học phần đã chốt lịch.` : ""),
       errorPrefix: "Xoá giờ thất bại",
     },
   ), [runAction]);

@@ -372,12 +372,55 @@ export function buildProblemInbox(data, guestResult, residentResult = null, pend
     }
   }
 
+  // --- 2b. Buoi CO HUU (Giai doan 2) khong xep duoc ---
+  //
+  // Truoc day Giai doan 2 khong the co buoi nao "khong xep duoc": mo hinh ep moi
+  // lop phai xep, xep het thi OPTIMAL, khong thi INFEASIBLE mat trang ket qua
+  // (xem chu thich o scheduler_core.solve_resident_phase). Nay GD2 GHIM gio da
+  // chot trong file, nen se co lop khong xep duoc that - hay gap nhat la file khai
+  // HAI lop khac nhau cho CUNG mot nguoi vao CUNG mot o gio. Phai bao ra kem thu
+  // pham de giao vu sap lai, thay vi im lang thieu buoi tren luoi.
+  for (const u of residentResult?.unplaced ?? []) {
+    if (explainedBy.has(u.id)) continue;
+    const row = rowById.get(u.id);
+    const viTri = u.pinnedLabel ? `giờ đã chốt ${u.pinnedLabel}` : "chưa có giờ cụ thể";
+    const doAi = u.blockers?.length
+      ? ` — đang bị ${u.blockers.map((b) => codeOf(b.sectionId)).join(", ")} chiếm chỗ`
+      : "";
+    items.push({
+      id: `${PROBLEM_TYPE.UNPLACED}:${u.id}`,
+      type: PROBLEM_TYPE.UNPLACED,
+      teacherId: u.teacherId,
+      teacherName: u.teacherName,
+      sectionIds: [u.id, ...(u.blockers ?? []).map((b) => b.sectionId)],
+      sections: row ? [{ ...row, classCode: classCodeById.get(u.id) }] : [],
+      day: u.pinnedSlot != null ? slotToDayPeriod(u.pinnedSlot, slotsPerDay).day : null,
+      when: u.pinnedLabel ?? "—",
+      whenShort:
+        u.pinnedSlot != null ? `T${slotToDayPeriod(u.pinnedSlot, slotsPerDay).day + 2}` : "—",
+      title: codeOf(u.id),
+      brief: u.courseName,
+      detail: `${u.courseName} — cơ hữu, ${viTri}${doAi}.`,
+      coordinators: [u.coordinator].filter(Boolean),
+      blockers: (u.blockers ?? []).map((b) => ({
+        lesson: { id: b.sectionId, courseName: b.courseName, teacherName: b.teacherName },
+        atLabels: [b.slotLabel],
+      })),
+      unplacedIds: [u.id],
+    });
+    explainedBy.set(u.id, `${PROBLEM_TYPE.UNPLACED}:${u.id}`);
+  }
+
   // --- 3. Buoi chua co gio, gom theo dieu phoi vien ---
+  // Lop cua NHIEU chuong trinh ("BCSE+MJM") co nhieu dieu phoi vien - no phai hien
+  // trong viec-can-lam cua TUNG NGUOI, chu khong gom thanh mot muc chung mang ten
+  // ca hai (luc do ca hai deu tuong nguoi kia lo).
   const missingByCoord = new Map();
   for (const r of sq.queue) {
-    const key = r.coordinator || "(không rõ)";
-    if (!missingByCoord.has(key)) missingByCoord.set(key, []);
-    missingByCoord.get(key).push(r);
+    for (const key of r.coordinators?.length ? r.coordinators : [r.coordinator || "(không rõ)"]) {
+      if (!missingByCoord.has(key)) missingByCoord.set(key, []);
+      missingByCoord.get(key).push(r);
+    }
   }
   for (const [coordinator, list] of missingByCoord) {
     items.push({

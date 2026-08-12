@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CopyPlus, Plus, TriangleAlert, Trash2 } from "lucide-react";
+import { CopyPlus, Lock, Plus, TriangleAlert, Trash2, X } from "lucide-react";
 import { useAppData } from "../../context/AppDataContext";
 import ClassTimeSlotPicker from "./ClassTimeSlotPicker";
 import { FormRow } from "@/components/shared/form-row";
@@ -241,6 +241,17 @@ export default function SectionEditDrawer({ data, section, onClose, onDuplicated
           {error && (
             <Notice tone="red" icon={TriangleAlert}>
               {error}
+            </Notice>
+          )}
+
+          {/* Hoc phan DA CHOT LICH: backend tu choi moi thay doi (409), nen phai
+              noi TRUOC chu khong de nguoi dung go xong ca form roi moi bao. */}
+          {section?.courseChot && (
+            <Notice tone="amber" icon={Lock}>
+              Học phần này <strong>đã chốt lịch</strong> ({section.courseChot.by},{" "}
+              {(section.courseChot.at || "").slice(0, 16).replace("T", " ")}
+              {section.courseChot.note ? ` — ${section.courseChot.note}` : ""}). Không sửa được
+              cho tới khi <strong>bỏ chốt</strong> học phần ở bảng “Dữ liệu học phần”.
             </Notice>
           )}
 

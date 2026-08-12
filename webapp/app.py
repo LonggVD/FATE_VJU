@@ -133,6 +133,38 @@ def _build_classes_list(data):
     for sid, s in data["sections"].items():
         course = data.get("courses", {}).get(s.get("course_id")) or {}
         teacher = data["teachers"].get(s["teacher_id"], {})
+        # MOI giang vien cua lop, VAI TRO NGANG NHAU (khong co "GV chinh" -
+        # teacher_ids[0] chi la nguoi dau danh sach). Bang mirror hien tung nguoi
+        # MOT DONG trong o giang vien, dung nhu file Excel goc, de doc duoc email/
+        # SDT cua TUNG nguoi va bam vao tung nguoi de khai gio.
+        tids = [t for t in (s.get("teacher_ids") or [s["teacher_id"]]) if t in data["teachers"]]
+
+        # Lop DA CHOT GIO nhung gio do nam NGOAI khung ranh nguoi ta vua khai.
+        # Thu tu uu tien da chot: gio chot trong file KHONG bi doi, nen he thong
+        # giu nguyen - nhung phai noi ra, khong thi giao vu khai gio xong thay lop
+        # van nam cho khac va khong hieu vi sao.
+        def _ngoai_khung(tid):
+            khung = set(data.get("manual_teacher_windows", {}).get(tid) or [])
+            if not khung or s.get("time_assumed") or s.get("original_slot") is None:
+                return False
+            return any(s["original_slot"] + k not in khung for k in range(s["duration"]))
+
+        gv_cua_lop = [
+            {
+                "id": t, "name": data["teachers"][t].get("name"),
+                # Gio da chot cua lop nay khong nam trong khung nguoi do da khai.
+                "outsideDeclared": _ngoai_khung(t),
+                "title": data["teachers"][t].get("title") or "",
+                "org": data["teachers"][t].get("org") or "",
+                "email": data["teachers"][t].get("email") or "",
+                "phone": data["teachers"][t].get("phone") or "",
+                "type": data["teachers"][t].get("type"),
+                "isPlaceholder": bool(data["teachers"][t].get("placeholder")),
+                "availabilitySlots": len(
+                    data.get("manual_teacher_windows", {}).get(t) or []),
+            }
+            for t in tids
+        ]
 
         # Lop tu Excel/gia lap khong co day/period_start/period_end (chi co
         # original_slot) - suy ra tu original_slot de bang van hien duoc gio
@@ -219,11 +251,28 @@ def _build_data_response(data, extra=None):
     """Dung chung cho ca sinh du lieu gia lap va nap du lieu that - cung cau truc
     'data' (xem generate_data/load_real_fate_data) nen tai dung duoc toan bo."""
     params = data["params"]
-    prog_names_rev = data.get("program_names_reverse")
 
     multi_program_count = sum(1 for t in data["teachers"].values() if "second_program" in t)
 
     manual_windows = data.get("manual_teacher_windows", {})
+
+    # Cac o gio moi GV DANG THUC SU DAY, suy tu cac lop DA CHOT GIO. Khac han
+    # "availabilitySlots" (gio GV/giao vu KHAI):
+    #   - dang day  = BANG CHUNG nguoi do day duoc luc do (lop da chot gio, GV va
+    #     dieu phoi vien da thong nhat) -> phai hien ra o luoi "Gio co the day",
+    #     neu khong thi nap file xong luoi trong tron, nhin nhu chua biet gi.
+    #   - da khai   = GIOI HAN CUNG khi xep cac lop CHUA co gio (xem
+    #     _apply_section_time). Nhap gio dang day vao day thi cac lop chua co gio
+    #     cua ho chi con duoc xep dung vao nhung o DA BI CHIEM -> khong xep duoc.
+    # Nen hai thu di RIENG, luoi hien hai mau khac nhau.
+    dang_day = {}
+    for s in data["sections"].values():
+        if s.get("time_assumed") or s.get("original_slot") is None:
+            continue
+        o = list(range(s["original_slot"], s["original_slot"] + s["duration"]))
+        for tid in (s.get("teacher_ids") or [s["teacher_id"]]):
+            dang_day.setdefault(tid, set()).update(o)
+
     teachers = [
         {
             "id": t["id"], "name": sc.teacher_display(data, t["id"]), "type": t["type"],
@@ -423,6 +472,112 @@ def _detect_move_conflict(data, section_id, slot):
     }
 
 
+def _lich_ban_dau(data):
+    """Dung LICH BAN DAU tu cac lop DA CHOT GIO trong file, khong chay solver.
+
+    Vi sao can: nap file xong, man "Thoi khoa bieu" bao "Chua co lich nao - bam
+    Giai o buoc 2" du file da chot gio cho phan lon cac lop (HK1-2: 246/343). Giao
+    vu phai bam Giai moi thay duoc chinh cai minh vua nap - trong khi nhung gio do
+    la DA CHOT, khong phai do thuat toan xep.
+
+    Tra ve (ket_qua_GD1, ket_qua_GD2) dung khuon solver tra ve, kem co
+    initial=True de UI biet day KHONG phai ket qua da giai (thanh tien trinh van
+    hien "chua chay", nut buoc 3 van cho chay buoc 2 truoc).
+    """
+    p = data["params"]
+    theo_pha = {"GUEST": [], "RESIDENT": []}
+    for sid, s in data["sections"].items():
+        if s.get("time_assumed") or s.get("original_slot") is None:
+            continue
+        day, period = divmod(s["original_slot"], p["slotsPerDay"])
+        theo_pha.setdefault(s["teacher_type"], []).append({
+            "id": sid, "teacherId": s["teacher_id"],
+            "teacherName": sc.teacher_display(data, s["teacher_id"]),
+            "teacherIds": list(s.get("teacher_ids") or [s["teacher_id"]]),
+            "courseName": s.get("course_name"), "program": s["program"],
+            "programLabel": sc.section_program_label(data, s),
+            "coordinator": ", ".join(sc.section_coordinators(data, s)),
+            "roomType": s["room_type"], "day": day, "period": period,
+            "slot": s["original_slot"], "duration": s["duration"],
+            "teacherType": s["teacher_type"], "status": "DRAFT",
+        })
+
+    def goi(loai):
+        lessons = sorted(theo_pha[loai], key=lambda l: l["id"])
+        return {
+            "status": "TU_FILE", "elapsedSeconds": 0.0,
+            "total": sum(1 for s in data["sections"].values() if s["teacher_type"] == loai),
+            "placedCount": len(lessons), "lessons": lessons, "unplaced": [],
+            "initial": True,
+        }
+
+    return goi("GUEST"), goi("RESIDENT")
+
+
+def _ghim_gio_da_chot(data):
+    """GHIM moi lop da chot gio trong file vao STATE['overrides'].
+
+    Ghim la co che manh nhat trong ca hai pha (xem _solve_guest_with_overrides va
+    _ghim_tay_o_giai_doan_2) nen chay "Xep thinh giang"/"Ghep co huu" khong lam
+    xe dich cac lop nay. Solver von cung da ghim theo `original_slot`, nhung ghi
+    vao overrides de GIAO DIEN hien dung trang thai "da ghim" - giao vu nhin ra
+    ngay lop nao la gio chot tu file, lop nao do he thong xep.
+    """
+    STATE["overrides"] = {
+        sid: {"slot": s["original_slot"], "reason": "Giờ đã chốt trong file"}
+        for sid, s in data["sections"].items()
+        if not s.get("time_assumed") and s.get("original_slot") is not None
+    }
+
+
+def _chot_hoc_phan_du_gio_tu_file(data, nguon=None):
+    """Danh dau DA CHOT LICH cho moi hoc phan ma MOI lop cua no deu co gio trong
+    file. Tra ve so hoc phan vua chot.
+
+    Theo dung quyet dinh A2: *"cac lop da duoc import tu file la cac lop da chot
+    gio, tuc giao vien day da chot qua loi voi dieu phoi vien"*. Gio do von da
+    duoc ghim (_ghim_gio_da_chot) - viec con thieu chi la NOI RA tren giao dien,
+    de o "Da chot n/153 mon" khong bao 0 trong khi 246/343 lop da co gio chot.
+
+    Chi chot hoc phan DU gio: mot mon con lop chua co gio thi ban chinh thuc cua
+    no chua hoan chinh, chot vao la sai nghia. `truoc` de rong tuong ung "moi lop
+    von da co gio nay" - bo chot se tra dung ve gio trong file, khong ve "de he
+    thong tu xep".
+    """
+    theo_hp = {}
+    for sid, sec in data["sections"].items():
+        theo_hp.setdefault(sec.get("course_id"), []).append(sec)
+    now = datetime.datetime.now().isoformat(timespec="seconds")
+    dem = 0
+    for cid, ds in theo_hp.items():
+        hp = data.get("courses", {}).get(cid)
+        if hp is None or hp.get("chot"):
+            continue
+        if not ds or any(x.get("time_assumed") or x.get("original_slot") is None for x in ds):
+            continue
+        hp["chot"] = {
+            "at": now, "by": "Nhập từ Excel",
+            "note": f"Giờ đã chốt sẵn trong {nguon}" if nguon else "Giờ đã chốt sẵn trong file",
+            "soLop": len(ds), "tuFile": True,
+            "truoc": {str(x["id"]): {"day": x.get("day"), "periodStart": x.get("period_start"),
+                                     "periodEnd": x.get("period_end"), "timeAssumed": False}
+                      for x in ds},
+        }
+        dem += 1
+    return dem
+
+
+def _dat_lich_ban_dau(data, nguon=None):
+    """Ghim gio da chot + danh dau hoc phan du gio la DA CHOT + dat lich ban dau
+    vao STATE (dung sau khi nap file)."""
+    _ghim_gio_da_chot(data)
+    _chot_hoc_phan_du_gio_tu_file(data, nguon)
+    g, r = _lich_ban_dau(data)
+    _attach_override_metadata(data, g, "GUEST")
+    _attach_override_metadata(data, r, "RESIDENT")
+    STATE["guestResult"], STATE["residentResult"] = g, r
+
+
 def _attach_override_metadata(data, result, teacher_type):
     """Gan {reason, problem, pinFailed} tu STATE['overrides'] len tren ket qua
     giai - CHI la metadata hien thi, khong doi vi tri bat ky buoi nao. pinFailed=
@@ -576,7 +731,60 @@ REAL_DATA_FILES = {
 }
 
 
+# Chuan hoa program_id: chi tach dau ghep that su. KHONG dung cho bo loc.
+# Sentinel: phan biet "khong truyen time_info" voi "truyen None" (= de he thong
+# tu xep) - hai truong hop khac han nhau o _khoa_vi_da_chot.
+_KHONG_TRUYEN = object()
+
 _PROGRAM_SPLIT_RE = re.compile(r"[+.]")
+
+# Rieng cho BO LOC: ngoac va " - " trong file that vua dung de ghep ma
+# ('BICA (+ESCT)') vua de ghi chu ('BCSE (voi nhung SV...)', 'ESAS - Hoc ghep
+# voi cac lop khac') nen phai cat ca hai roi loc bo ghi chu, xem _tach_phan().
+# Khong gop vao _PROGRAM_SPLIT_RE: ham do dat TEN chuong trinh, cat ngoac o do
+# se doi 'BCSE (voi nhung SV chua hoc o ky 1)' thanh mot ten khac han.
+_PROGRAM_PART_RE = re.compile(r"[+.()\[\]]|\s-\s")
+
+
+_KHOA_SPLIT_RE = re.compile(r"[+,;/]")
+
+
+def _la_ghi_chu(phan):
+    """Phan nay la GHI CHU cua giao vu chu khong phai mot ma?
+
+    Ma chuong trinh/khoa la mot tu ('BCSE', 'Chung', 'VJU2024'). Ghi chu la mot
+    cau: 'voi nhung SV da hoc Triet', 'Hoc ghep voi cac lop khac'. Moc phan biet:
+    >= 2 tu VA co chu thuong - du de giu 'Chung' (1 tu) va loai het cac cau that
+    gap trong 3 file.
+    """
+    return len(phan.split()) >= 2 and any(c.islower() for c in phan)
+
+
+def _tach_phan(raw, chia_re):
+    """Tach mot o GHEP thanh cac thanh phan: 'BCSE+MJM' -> ['BCSE', 'MJM'],
+    'VJU2023+VJU2024' -> ['VJU2023', 'VJU2024'].
+
+    Dung cho BO LOC: mot lop ghi 'BCSE+MJM' la lop cua CA HAI chuong trinh, nen
+    loc 'BCSE' phai ra ca no. Truoc day loc so khop nguyen chuoi -> 'BCSE+MJM'
+    thanh mot muc RIENG trong danh sach chon, va chon 'BCSE' thi khong thay lop
+    do dau. Cung the voi khoa, cong them chuyen 'VJU2023+VJU2024' va
+    'VJU2024+VJU2023' hien thanh HAI muc gan giong nhau.
+
+    NGOAC lam duoc CA HAI viec trong file that, nen phai cat theo ngoac roi moi
+    xet tung phan:
+        'BICA (+ESCT)'                        -> ngoac chua MA thu hai
+        'BCSE (voi nhung SV chua hoc o ky 1)' -> ngoac chua GHI CHU
+    Cat theo ngoac ma khong xet thi ra 'BICA (' va 'ESCT)'; con bo thang phan
+    trong ngoac thi mat ESCT. Nen: cat, roi bo phan nao la ghi chu
+    (_la_ghi_chu). Con lai rong (ca o chi la mot cau) thi tra ve nguyen o - tha
+    de bo loc co mot muc xau con hon lam bien mat lop khoi moi bo loc.
+    """
+    tho = [p.strip(" 	.,;/+-()[]") for p in chia_re.split(raw or "")]
+    phan = [p for p in tho if p and not _la_ghi_chu(p)]
+    if phan:
+        return phan
+    goc = " ".join(str(raw or "").split())
+    return [goc] if goc else []
 
 
 def _canonical_program_name(raw):
@@ -721,6 +929,10 @@ def _load_snapshot():
     data["forced_conflict_teacher_ids"] = set(data.get("forced_conflict_teacher_ids") or [])
     STATE["data"] = data
     STATE["extra"] = snap.get("extra")
+    # Snapshot chi luu data/extra (ket qua giai khong luu - giai lai la ra). Nhung
+    # LICH BAN DAU tu gio da chot thi dung lai duoc ngay, khong thi mo lai app la
+    # man TKB trong tron du du lieu co day gio.
+    _dat_lich_ban_dau(data)
 
 
 def _parse_class_time(body, slots_per_day, teacher_type=None, enforce_cap=True):
@@ -755,10 +967,16 @@ def _parse_class_time(body, slots_per_day, teacher_type=None, enforce_cap=True):
     except (TypeError, ValueError):
         return None, "Thứ/Tiết đầu/Tiết cuối phải là số nguyên."
     if not (0 <= day <= 6) or p_start < 1 or p_end < p_start or p_end > slots_per_day:
-        return None, "Thứ/Tiết không hợp lệ."
-    if teacher_type is not None and day > sc.max_day_index(teacher_type):
+        # O luong NAP FILE, mot o gio ngoai pham vi KHONG duoc lam rung ca lop:
+        # truoc day chon nguon gio ghi tiet 13 o buoc "Xac nhan gio hoc" lam lop
+        # bien mat khoi bo du lieu, mat luon GV/SV/hoc phan, chi de lai mot dong
+        # loi "Thu/Tiet khong hop le". Bo gio, giu lop.
         if not enforce_cap:
             return None, None
+        return None, "Thứ/Tiết không hợp lệ."
+    # Quy dinh ngay: CHI ap khi go tay (enforce_cap=True). Gio tu file la gio da
+    # chot - giu nguyen, chi ghi nhan de bao o buoc xem truoc.
+    if enforce_cap and teacher_type is not None and day > sc.max_day_index(teacher_type):
         max_label = _DAY_LABELS_VN[sc.max_day_index(teacher_type)]
         loai = "Thỉnh giảng" if teacher_type == "GUEST" else "Cơ hữu"
         return None, f"{loai} chỉ được dạy tới {max_label}."
@@ -798,17 +1016,36 @@ def _apply_section_time(data, sid, teacher, duration, time_info):
 
     s["day"] = s["period_start"] = s["period_end"] = s["original_slot"] = None
     s["time_assumed"] = True
-    if teacher["type"] == "RESIDENT":
-        data["submissions"][sid] = []
-        return
+    s["availability_assumed"] = False
+    # Loai lop va gio ranh deu tinh theo CA NHOM dong giang (_loai_lop/
+    # _gio_ranh_chung), khong chi GV chinh: lop 5 nguoi day thi phai xep vao gio
+    # CA 5 nguoi ranh.
+    tids = s.get("teacher_ids") or [s["teacher_id"]]
+    loai = s.get("teacher_type", teacher["type"])
     slots_per_day = data["params"]["slotsPerDay"]
-    available = data.get("manual_teacher_windows", {}).get(teacher["id"], [])
+    available, so_nguoi_khai = _gio_ranh_chung(data, tids)
     starts = _valid_starts_from_slots(available, duration, slots_per_day)
     if starts:
+        # DA KHAI gio -> GIOI HAN CUNG, ke ca voi co huu: chi xep trong khung do.
+        # Khung do khong bi cat theo quy dinh ngay (sc.MAX_DAY_INDEX): quy dinh la
+        # de HE THONG chon ho, con GV khai Thu 7 la con nguoi tu noi minh day duoc
+        # hom do - cung ly le voi "gio trong file la gio da chot".
         data["submissions"][sid] = starts
-    else:
+        return
+    if so_nguoi_khai:
+        # DA khai nhung khong con khung nao du dai cho lop nay (voi lop nhieu GV:
+        # giao cac khung khong con cho) -> xung dot THAT, phai bao chu khong duoc
+        # tu noi ra ca tuan.
         data["submissions"][sid] = []
         data["pending_section_ids"].append(sid)
+        return
+    # CHUA ai khai gi -> tu do ca tuan (xem docstring).
+    s["availability_assumed"] = True
+    if loai == "RESIDENT":
+        data["submissions"][sid] = []
+        return
+    data["submissions"][sid] = sc.valid_starts(
+        data["params"]["numDays"], slots_per_day, duration, loai)
 
 
 def _validate_section_body(data, body, enforce_day_cap=True):
@@ -1611,14 +1848,27 @@ def _build_manual_data_from_rows(rows):
             loi.append({"row": r["excelRow"], "reason": err})
             continue
         if time_info is None and not r["autoSchedule"] and r["day"] is not None:
-            max_label = _DAY_LABELS_VN[sc.max_day_index(teacher["type"])]
+            # Chi con MOT ly do lam mat gio: tiet vo ly (> MAX_TIET). Ngay ngoai quy
+            # dinh khong con bi bo gio nua - xem _parse_class_time.
+            canh_bao.append({
+                "row": r["excelRow"], "kind": "gio_ngoai_pham_vi_tiet",
+                "detail": (
+                    f"“{r['classCode'] or r['courseName'][:30]}” — tiết {r['periodStart']}-"
+                    f"{r['periodEnd']} không thể là giờ học thật — đã bỏ giờ, chuyển sang "
+                    f"“để hệ thống tự xếp”"
+                ),
+            })
+        elif time_info is not None and time_info["day"] > sc.max_day_index(teacher["type"]):
+            # Gio da chot -> GIU NGUYEN, nhung phai noi ra: day la ngoai le so voi
+            # quy dinh (thinh giang toi Thu 7, co huu toi Thu 6).
             loai = "Thỉnh giảng" if teacher["type"] == "GUEST" else "Cơ hữu"
             canh_bao.append({
-                "row": r["excelRow"], "kind": "vuot_quy_dinh_ngay",
+                "row": r["excelRow"], "kind": "ngay_ngoai_quy_dinh_giu_nguyen",
                 "detail": (
-                    f"{loai} \"{r['teacherName']}\" — {_DAY_LABELS_VN[r['day']]} vượt quy định "
-                    f"({loai} chỉ tới {max_label}) — đã bỏ giờ cố định, chuyển sang "
-                    f"\"để hệ thống tự xếp\", cần gán lại giờ"
+                    f"{loai} “{r['teacherName']}” dạy {_DAY_LABELS_VN[time_info['day']]} — "
+                    f"ngoài quy định ({loai} chỉ tới "
+                    f"{_DAY_LABELS_VN[sc.max_day_index(teacher['type'])]}), "
+                    f"nhưng GIỮ NGUYÊN vì là giờ đã chốt trong file"
                 ),
             })
         sid = len(data["sections"])
@@ -1878,10 +2128,16 @@ def api_manual_clear_times():
         return jsonify({"error": "sectionIds phải là danh sách số nguyên."}), 400
 
     cleared = 0
+    bo_qua_da_chot = 0
     for sid in section_ids:
         s = data["sections"].get(sid)
         teacher = data["teachers"].get(s["teacher_id"]) if s else None
         if s is None or teacher is None:
+            continue
+        # Xoa gio hang loat KHONG duoc pha mon da chot: nut nay xoa theo bo loc
+        # dang hien nen rat de quet trung vao mon da cam ket voi giang vien.
+        if _khoa_vi_da_chot(data, sid):
+            bo_qua_da_chot += 1
             continue
         _apply_section_time(data, sid, teacher, s["duration"], None)
         # Gio cu khong con - "Trang thai lich" (tu Luu thoi khoa bieu) da het
@@ -1892,6 +2148,7 @@ def api_manual_clear_times():
     _save_snapshot()
     resp = _build_data_response(data, STATE.get("extra"))
     resp["clearedCount"] = cleared
+    resp["skippedChotCount"] = bo_qua_da_chot
     return jsonify(resp)
 
 
@@ -2083,10 +2340,52 @@ def api_manual_add_section():
     return jsonify(_build_data_response(data, STATE.get("extra")))
 
 
+def _khoa_vi_da_chot(data, section_id, time_info=_KHONG_TRUYEN):
+    """Loi (str) neu thao tac nay dung vao GIO cua mot lop thuoc hoc phan DA CHOT -
+    hoac None.
+
+    Chot lich la mot cam ket voi giang vien; sua gio le tren bang sau do lam ban
+    chinh thuc va ban da bao cho GV lech nhau ma khong ai thay. Muon doi gio thi
+    phai BO CHOT truoc - mot thao tac co y thuc, co ghi lai.
+
+    KHOA DUNG PHAN GIO, khong khoa ca ban ghi: sau khi nhap file van con phai sua
+    ma lop sai, ten GV thieu, email, dia diem... Chan tat ca thi mon da chot thanh
+    bat kha xam pham va giao vu het duong don du lieu. Truyen `time_info` (dang ma
+    _validate_section_body tra ve) de so: gio KHONG doi thi cho qua.
+    """
+    s = data["sections"].get(section_id)
+    if s is None:
+        return None
+    hp = data.get("courses", {}).get(s.get("course_id")) or {}
+    chot = hp.get("chot")
+    if not chot:
+        return None
+    if time_info is not _KHONG_TRUYEN and not _gio_doi(s, time_info):
+        return None
+    return (f"Học phần “{hp.get('name') or ''}” đã chốt lịch "
+            f"({chot.get('by')}, {(chot.get('at') or '')[:16].replace('T', ' ')}). "
+            f"Bỏ chốt học phần trước khi sửa giờ.")
+
+
+def _gio_doi(s, time_info):
+    """Yeu cau nay co lam DOI gio cua lop khong? time_info=None nghia la "de he
+    thong tu xep" - voi lop dang co gio chot thi do CUNG la mot thay doi."""
+    if time_info is None:
+        return not s.get("time_assumed")
+    return (bool(s.get("time_assumed"))
+            or s.get("day") != time_info["day"]
+            or s.get("period_start") != time_info["period_start"]
+            or s.get("period_end") != time_info["period_end"])
+
+
 @app.patch("/api/manual/section/<int:section_id>")
 def api_manual_update_section(section_id):
     """Sua 1 lop da nhap - body cung dinh dang day du nhu POST /api/manual/section
-    (khong merge tung phan, xem ly do o _validate_section_body)."""
+    (khong merge tung phan, xem ly do o _validate_section_body).
+
+    Luu y: `teacherIds` phai gui DAY DU ca danh sach. Gui thieu = nhung nguoi con
+    lai bi bo khoi lop - dung y nghia "gui du ca form", nhung de sot thi mat du
+    lieu am tham."""
     if STATE["data"] is None:
         return jsonify({"error": "Chưa có dữ liệu."}), 400
     data = STATE["data"]
@@ -2097,6 +2396,12 @@ def api_manual_update_section(section_id):
     fields, teacher, duration, time_info, err = _validate_section_body(data, body)
     if err:
         return jsonify({"error": err}), 400
+
+    # Chan SAU khi validate: chi tu choi khi yeu cau nay lam DOI gio cua mot lop
+    # thuoc hoc phan da chot. Sua ten GV/email/dia diem... van cho qua.
+    khoa = _khoa_vi_da_chot(data, section_id, time_info)
+    if khoa:
+        return jsonify({"error": khoa, "locked": True}), 409
 
     data["sections"][section_id].update(fields)
     _apply_section_time(data, section_id, teacher, duration, time_info)
@@ -2213,6 +2518,12 @@ def api_move_lesson():
     except (KeyError, TypeError, ValueError):
         return jsonify({"error": "Thieu hoac sai sectionId/slot."}), 400
     reason = (body.get("reason") or "").strip() or None
+    # Mon da chot lich = da cam ket voi giang vien -> khong keo-tha di cho khac
+    # duoc nua. Chan o day chu khong chi an nut o frontend: giao vu co the dang
+    # mo hai tab, ban luoi ben kia chua biet mon vua duoc chot.
+    khoa = _khoa_vi_da_chot(data, section_id)
+    if khoa:
+        return jsonify({"error": khoa, "locked": True}), 409
 
     s = data["sections"].get(section_id)
     if not s:
@@ -2281,7 +2592,15 @@ def api_clear_override():
     data = STATE["data"]
     body = request.get_json(force=True)
     section_id = int(body["sectionId"])
+    khoa = _khoa_vi_da_chot(data, section_id)
+    if khoa:
+        return jsonify({"error": khoa, "locked": True}), 409
     STATE["overrides"].pop(section_id, None)
+    # Xoa khoi overrides thoi la CHUA DU voi lop co gio chot trong file: solver van
+    # ghim theo original_slot/submissions nen lan giai sau lop nam nguyen cho cu.
+    # Ghi vao STATE['bo_ghim'] de ca hai duong ghim cung tha lop nay ra.
+    if section_id in data["sections"]:
+        STATE["bo_ghim"].add(section_id)
 
     _attach_override_metadata(data, STATE["guestResult"], "GUEST")
     _attach_override_metadata(data, STATE["residentResult"], "RESIDENT")
@@ -2306,6 +2625,154 @@ def api_manual_export():
         buf, as_attachment=True, download_name=filename,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
+def _slot_dang_hien(data, sid):
+    """Slot cua mot lop DANG HIEN tren luoi Thoi khoa bieu, theo dung thu tu uu
+    tien ma man do dung: ghim tay > ket qua GD2 > ket qua GD1 > gio da ghi san o
+    lop. None = lop nay chua o dau ca."""
+    ov = STATE["overrides"].get(sid)
+    if ov and ov.get("slot") is not None:
+        return ov["slot"]
+    for res in (STATE.get("residentResult"), STATE.get("guestResult")):
+        for l in (res or {}).get("lessons") or []:
+            if l["id"] == sid:
+                return l["slot"]
+    if not (data["sections"][sid].get("time_assumed")):
+        return data["sections"][sid].get("original_slot")
+    return None
+
+
+def _lop_cua_hoc_phan(data, course_id):
+    return [s for s in data["sections"].values() if s.get("course_id") == course_id]
+
+
+def _chot_hoc_phan(data, course_id, nguoi, ghi_chu):
+    """CHOT LICH cho ca mot hoc phan: moi lop cua no lay gio dang hien tren luoi,
+    ghi thanh gio chinh thuc VA ghim lai.
+
+    Khac "Luu thoi khoa bieu" (chot MOT LAN cho toan bo 343 lop): thuc te giao vu
+    chot dan tung mon - mon nao thong nhat xong voi giang vien thi khoa lai, cac
+    mon con lai van de he thong xep tiep ma khong lam xe dich mon da chot.
+
+    Ghim qua STATE['overrides'] chu khong chi ghi gio vao lop: overrides la co che
+    manh nhat o CA HAI pha (xem _solve_guest_with_overrides/_ghim_tay_o_giai_doan_2)
+    nen giai lai bao nhieu lan mon nay cung dung yen.
+
+    Luu `truoc` = trang thai gio TRUOC khi chot cua tung lop, de "bo chot" tra
+    lai dung nhu cu: lop von co gio chot trong file thi giu gio do, lop von chua
+    co gio thi ve lai "de he thong tu xep" - khong the doan lai duoc neu khong ghi.
+    """
+    lop = _lop_cua_hoc_phan(data, course_id)
+    if not lop:
+        return None, "Học phần này chưa có lớp nào."
+
+    slots_per_day = data["params"]["slotsPerDay"]
+    thieu, gan = [], []
+    for s in lop:
+        slot = _slot_dang_hien(data, s["id"])
+        if slot is None:
+            thieu.append(s)
+            continue
+        gan.append((s, slot))
+    if thieu:
+        return None, {
+            "error": ("Chưa chốt được: %d lớp của học phần này chưa có giờ. "
+                      "Hãy xếp hoặc nhập giờ cho chúng trước." % len(thieu)),
+            "missing": [{"sectionId": s["id"], "classCode": s.get("class_code"),
+                         "courseName": s.get("course_name")} for s in thieu],
+        }
+
+    truoc = {}
+    for s, slot in gan:
+        truoc[str(s["id"])] = {
+            "day": s.get("day"), "periodStart": s.get("period_start"),
+            "periodEnd": s.get("period_end"), "timeAssumed": bool(s.get("time_assumed")),
+        }
+        day, period0 = divmod(slot, slots_per_day)
+        teacher = data["teachers"][s["teacher_id"]]
+        _apply_section_time(data, s["id"], teacher, s["duration"], {
+            "day": day, "period_start": period0 + 1,
+            "period_end": period0 + s["duration"],
+        })
+        STATE["overrides"][s["id"]] = {
+            "slot": slot, "reason": "Đã chốt lịch học phần", "problem": None,
+        }
+        STATE["bo_ghim"].discard(s["id"])
+
+    data["courses"][course_id]["chot"] = {
+        "at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "by": (nguoi or "").strip() or "Giáo vụ",
+        "note": (ghi_chu or "").strip(),
+        "soLop": len(gan),
+        "truoc": truoc,
+    }
+    return len(gan), None
+
+
+def _bo_chot_hoc_phan(data, course_id):
+    """Mo lai mot hoc phan da chot: go ghim va TRA GIO VE dung trang thai truoc
+    khi chot (xem `truoc` trong _chot_hoc_phan). Lop von chua co gio quay lai
+    "de he thong tu xep"; lop von co gio chot tu file giu nguyen gio do."""
+    course = data["courses"][course_id]
+    chot = course.get("chot") or {}
+    truoc = chot.get("truoc") or {}
+    for s in _lop_cua_hoc_phan(data, course_id):
+        STATE["overrides"].pop(s["id"], None)
+        cu = truoc.get(str(s["id"]))
+        teacher = data["teachers"][s["teacher_id"]]
+        if cu is None or cu.get("timeAssumed") or cu.get("day") is None:
+            _apply_section_time(data, s["id"], teacher, s["duration"], None)
+            # Lop von chua co gio: phai noi ro "cho he thong xep lai", neu khong
+            # gio vua chot van con o original_slot va solver ghim theo no.
+            STATE["bo_ghim"].add(s["id"])
+        else:
+            _apply_section_time(data, s["id"], teacher, s["duration"], {
+                "day": cu["day"], "period_start": cu["periodStart"],
+                "period_end": cu["periodEnd"],
+            })
+            STATE["bo_ghim"].discard(s["id"])
+    course.pop("chot", None)
+
+
+@app.post("/api/manual/course/<int:course_id>/chot")
+def api_manual_chot_course(course_id):
+    """Chot lich giang day cho 1 hoc phan (moi lop cua no)."""
+    if STATE["data"] is None:
+        return jsonify({"error": "Chưa có dữ liệu."}), 400
+    data = STATE["data"]
+    if course_id not in data.get("courses", {}):
+        return jsonify({"error": f"Không tìm thấy học phần id={course_id}."}), 400
+    body = request.get_json(silent=True) or {}
+    so, err = _chot_hoc_phan(data, course_id, body.get("by"), body.get("note"))
+    if err:
+        return jsonify(err if isinstance(err, dict) else {"error": err}), 400
+    _attach_override_metadata(data, STATE["guestResult"], "GUEST")
+    _attach_override_metadata(data, STATE["residentResult"], "RESIDENT")
+    _save_snapshot()
+    resp = _build_data_response(data, STATE.get("extra"))
+    resp["chotCount"] = so
+    resp["courseName"] = data["courses"][course_id].get("name")
+    return jsonify(resp)
+
+
+@app.delete("/api/manual/course/<int:course_id>/chot")
+def api_manual_bo_chot_course(course_id):
+    """Bo chot 1 hoc phan - tra gio ve trang thai truoc khi chot."""
+    if STATE["data"] is None:
+        return jsonify({"error": "Chưa có dữ liệu."}), 400
+    data = STATE["data"]
+    if course_id not in data.get("courses", {}):
+        return jsonify({"error": f"Không tìm thấy học phần id={course_id}."}), 400
+    if not data["courses"][course_id].get("chot"):
+        return jsonify({"error": "Học phần này chưa được chốt."}), 400
+    _bo_chot_hoc_phan(data, course_id)
+    _attach_override_metadata(data, STATE["guestResult"], "GUEST")
+    _attach_override_metadata(data, STATE["residentResult"], "RESIDENT")
+    _save_snapshot()
+    resp = _build_data_response(data, STATE.get("extra"))
+    resp["courseName"] = data["courses"][course_id].get("name")
+    return jsonify(resp)
 
 
 @app.post("/api/manual/save-schedule")
