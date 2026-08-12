@@ -17,7 +17,7 @@ const FALLBACK_COLOR = {
 // mau = phan loai (groupColor tu LessonGridBoard), vien do khi highlighted =
 // canh bao, luon de len tren khong doi mau nen.
 const LessonCard = memo(function LessonCard({
-  lesson, isHighlighted, onClearOverride, groupColor, onPickProblem, detailed = false,
+  lesson, isHighlighted, onClearOverride, onTachHocChung, groupColor, onPickProblem, detailed = false,
   canDrag = false, onDragStart, onDragEnd,
 }) {
   const problems = lesson.problems ?? [];
@@ -89,6 +89,11 @@ const LessonCard = memo(function LessonCard({
   const barClass = [
     "lesson-bar",
     detailed ? "detailed" : "",
+    // HOC CHUNG can dau hieu nhin thay o CA che do gon: o do khong render
+    // `lb-body` nen badge "×N" ben trong khong hien, va mot the gop se trong y
+    // nhu mot lop don le - giao vu dem the tren luoi roi doi chieu bang se thay
+    // thieu lop ma khong hieu vi sao.
+    lesson.hocChung ? "hoc-chung" : "",
     isHighlighted ? "highlighted" : "",
     lesson.pendingSave ? "pending-save" : "",
   ]
@@ -122,11 +127,16 @@ const LessonCard = memo(function LessonCard({
         // Tooltip he thong: doc duoc ngay ca truoc khi popover kip hien, va la
         // duong doc du phong khi khong dung duoc chuot.
         title={
-          problems.length > 0
-            ? `${label} ${lesson.courseName} — ${problems
-                .map((p) => PROBLEM_META[p.type].label)
-                .join(", ")}`
-            : `${label} ${lesson.courseName}`
+          (lesson.hocChung
+            ? `HỌC CHUNG ${lesson.hocChung.count} môn: `
+              + lesson.hocChung.members
+                  .map((m) => `${m.classCode || `#${m.id}`} ${m.courseName}`)
+                  .join(" + ")
+              + (lesson.hocChung.tongSV ? ` — tổng ${lesson.hocChung.tongSV} SV` : "")
+            : `${label} ${lesson.courseName}`)
+          + (problems.length > 0
+            ? ` — ${problems.map((p) => PROBLEM_META[p.type].label).join(", ")}`
+            : "")
         }
         onMouseEnter={showPopover}
         onMouseLeave={hidePopover}
@@ -142,10 +152,22 @@ const LessonCard = memo(function LessonCard({
                 {label}
                 {lesson.isPinned && <span className="lb-pin" aria-label="đã ghim">📌</span>}
                 {problems.length > 0 && <span className="lb-warn" aria-label="có vấn đề">!</span>}
+                {/* HOC CHUNG: the nay la MOT buoi cho nhieu ma mon - phai noi ra,
+                    khong thi giao vu thay mot the ma bang lai co N lop va tuong
+                    he thong bo sot. */}
+                {lesson.hocChung && (
+                  <span className="lb-hc" aria-label={`học chung ${lesson.hocChung.count} môn`}>
+                    ×{lesson.hocChung.count}
+                  </span>
+                )}
               </span>
               <span className="lb-room">{lesson.roomType}</span>
             </span>
-            <span className="lb-course">{lesson.courseName}</span>
+            <span className="lb-course">
+              {lesson.hocChung
+                ? lesson.hocChung.members.map((m) => m.courseName).join(" + ")
+                : lesson.courseName}
+            </span>
             <span className="lb-teacher">{lesson.teacherName}</span>
             {/* Neo o day the: giai thich vi sao the cao chung nay. */}
             <span className="lb-dur">{lesson.duration || 1} tiết</span>
@@ -177,8 +199,54 @@ const LessonCard = memo(function LessonCard({
                 thinh giang la GD1, moi buoi co huu la GD2 - khong co truong
                 hop khac) nen la thong tin lap lai, da bo. */}
             {lesson.isCoTeaching && <span className="lesson-shared-badge">ĐỒNG GIẢNG</span>}
+            {lesson.hocChung && (
+              <span className="lesson-hc-badge">HỌC CHUNG {lesson.hocChung.count} MÔN</span>
+            )}
           </div>
-          <div className="tt-name">{lesson.courseName}</div>
+          <div className="tt-name">
+            {lesson.hocChung
+              ? lesson.hocChung.members.map((m) => m.courseName).join(" + ")
+              : lesson.courseName}
+          </div>
+
+          {/* HOC CHUNG: mot buoi day, nhieu ma mon. Ke ro tung mon kem si so de
+              giao vu biet phong phai chua bao nhieu nguoi - day la ly do chinh de
+              gop chu khong chi de do bao trung gio. */}
+          {lesson.hocChung && (
+            <div className="tt-hc">
+              <div className="tt-label">Các lớp học chung buổi này</div>
+              {lesson.hocChung.members.map((m) => (
+                <div key={m.id} className="tt-hc-row">
+                  <span className="tt-hc-code">{m.classCode || `#${m.id}`}</span>
+                  <span className="tt-hc-name">{m.courseName}</span>
+                  <span className="tt-hc-sv">
+                    {m.expectedStudents != null ? `${m.expectedStudents} SV` : "— SV"}
+                  </span>
+                </div>
+              ))}
+              {lesson.hocChung.tongSV != null && (
+                <div className="tt-hc-tong">
+                  Tổng <strong>{lesson.hocChung.tongSV} sinh viên</strong> — phòng phải chứa đủ
+                </div>
+              )}
+              {/* TACH NHOM: dat ngay trong khoi dang liet ke nhom - do la cho
+                  nguoi dung dang xem nhom nen cung la cho ho quyet dinh bo no,
+                  giong cach nut "Bo ghim" nam trong khoi ghim ben duoi. */}
+              {onTachHocChung && (
+                <button
+                  type="button"
+                  className="tt-hc-btn"
+                  title={
+                    "Tách nhóm: các lớp trở lại độc lập. Từ lần Giải sau hệ thống "
+                    + "lại xếp chúng riêng và báo trùng giảng viên nếu vẫn cùng giờ."
+                  }
+                  onClick={() => { onTachHocChung(lesson.hocChung.id); setLocked(false); }}
+                >
+                  Tách nhóm — không học chung nữa
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Thanh mau do bao "co van de" - nhung mau khong noi duoc VAN DE GI.
               Popover phai tra loi cau do, neu khong thi mau chi la bao dong suong. */}

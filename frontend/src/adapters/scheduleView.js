@@ -63,6 +63,8 @@ export function buildScheduleView({ data, guestResult, residentResult, inbox, fi
   // PHAN, xem app._tach_phan(). Noi tu bang lop qua sectionId nhu classCode.
   const cohortById = new Map((data?.classes ?? []).map((c) => [c.sectionId, c.cohortParts ?? []]));
   const programPartsById = new Map((data?.classes ?? []).map((c) => [c.sectionId, c.programParts ?? []]));
+  // Si so - the HOC CHUNG cong don de biet phong phai chua bao nhieu nguoi.
+  const sinhVienById = new Map((data?.classes ?? []).map((c) => [c.sectionId, c.expectedStudents]));
 
   const withFlags = all.map((l) => {
     const ovMap = l.teacherType === "RESIDENT" ? residentOverrides : guestOverrides;
@@ -76,15 +78,68 @@ export function buildScheduleView({ data, guestResult, residentResult, inbox, fi
       hasProblem: problemMap.has(l.id),
       override,
       isPinned: !!override,
+      hocChungId: l.hocChungId ?? null,
     };
   });
 
+  // --- HOC CHUNG: gop cac buoi cung nhom thanh MOT THE ---------------------
+  // Chung o CUNG mot o gio (solver ep vay - xem webapp/domain/hoc_chung.py) nen
+  // neu de nguyen thi N the ve de len nhau trong mot o, khong doc duoc cai nao.
+  // Mot buoi day vat ly thi mot the: giu buoi DAI DIEN, gan them danh sach cac
+  // mon cung hoc de the/popup ke ra.
+  //
+  // Hop programParts/cohortParts/teacherIds cua ca nhom: bo loc theo CTDT/Khoa/GV
+  // phai tim ra the nay qua BAT KY thanh vien nao - lop hoc chung thuoc ve moi
+  // chuong trinh trong nhom.
+  const gopHocChung = (ds) => {
+    const theoNhom = new Map();
+    for (const l of ds) {
+      if (l.hocChungId == null) continue;
+      if (!theoNhom.has(l.hocChungId)) theoNhom.set(l.hocChungId, []);
+      theoNhom.get(l.hocChungId).push(l);
+    }
+    if (theoNhom.size === 0) return ds;
+    const bo = new Set();
+    const gop = new Map();
+    for (const [nhomId, ds2] of theoNhom) {
+      if (ds2.length < 2) continue;
+      const sx = [...ds2].sort((a, b) => a.id - b.id);
+      const rep = sx[0];
+      sx.slice(1).forEach((l) => bo.add(l.id));
+      gop.set(rep.id, {
+        ...rep,
+        programParts: [...new Set(sx.flatMap((l) => l.programParts ?? []))],
+        cohortParts: [...new Set(sx.flatMap((l) => l.cohortParts ?? []))],
+        teacherIds: [...new Set(sx.flatMap((l) => l.teacherIds ?? [l.teacherId]))],
+        problems: sx.flatMap((l) => l.problems ?? []),
+        hasProblem: sx.some((l) => l.hasProblem),
+        hocChung: {
+          id: nhomId,
+          count: sx.length,
+          members: sx.map((l) => ({
+            id: l.id, classCode: l.classCode, courseName: l.courseName,
+            programLabel: l.programLabel,
+            expectedStudents: sinhVienById.get(l.id) ?? null,
+          })),
+          tongSV: sx.reduce((t, l) => t + (sinhVienById.get(l.id) ?? 0), 0) || null,
+        },
+      });
+    }
+    return ds.filter((l) => !bo.has(l.id)).map((l) => gop.get(l.id) ?? l);
+  };
+  const daGop = gopHocChung(withFlags);
+
   const q = f.search.trim().toLowerCase();
-  const lessons = withFlags.filter((l) => {
+  const lessons = daGop.filter((l) => {
     if (l.teacherType === "GUEST" && !f.guest) return false;
     if (l.teacherType === "RESIDENT" && !f.resident) return false;
     if (f.scope === SCOPE.PROGRAM && f.scopeValue && !l.programParts.includes(f.scopeValue)) return false;
-    if (f.scope === SCOPE.TEACHER && f.scopeValue && String(l.teacherId) !== String(f.scopeValue)) return false;
+    // Loc theo GV xet CA NHOM (dong giang + hoc chung), khong chi GV chinh -
+    // cung ly le voi lessonAdapter.teacherLookupBuild.
+    if (f.scope === SCOPE.TEACHER && f.scopeValue) {
+      const tids = l.teacherIds?.length ? l.teacherIds : [l.teacherId];
+      if (!tids.some((t) => String(t) === String(f.scopeValue))) return false;
+    }
     if (f.scope === SCOPE.COHORT && f.scopeValue && !l.cohortParts.includes(f.scopeValue)) return false;
     if (f.onlyProblems && !l.hasProblem) return false;
     if (!q) return true;
@@ -93,7 +148,12 @@ export function buildScheduleView({ data, guestResult, residentResult, inbox, fi
       (l.courseName ?? "").toLowerCase().includes(q) ||
       (l.teacherName ?? "").toLowerCase().includes(q) ||
       (l.programLabel ?? "").toLowerCase().includes(q) ||
-      l.cohortParts.some((k) => k.toLowerCase().includes(q))
+      l.cohortParts.some((k) => k.toLowerCase().includes(q)) ||
+      // The gop: tim duoc qua ten/ma lop cua BAT KY mon cung hoc chung
+      (l.hocChung?.members ?? []).some(
+        (m) => (m.courseName ?? "").toLowerCase().includes(q)
+          || (m.classCode ?? "").toLowerCase().includes(q),
+      )
     );
   });
 

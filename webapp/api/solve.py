@@ -9,8 +9,8 @@ tam_bo_ghim(...)` de nhung lop giao vu vua bam "Bo ghim" that su duoc xep lai.
 from flask import Blueprint, jsonify, request
 
 from api.common import can_du_lieu, loi
-from domain.pinning import (attach_ca_hai, attach_override_metadata,
-                            ghim_tay_o_giai_doan_2, solve_guest_with_overrides,
+from domain.luoi import attach_ca_hai, attach_override_metadata, dong_bo_ket_qua
+from domain.pinning import (ghim_tay_o_giai_doan_2, solve_guest_with_overrides,
                             tam_bo_ghim)
 from state import STATE
 
@@ -48,8 +48,24 @@ def api_solve_guest(data):
         result = solve_guest_with_overrides(data)
     attach_override_metadata(data, result, "GUEST")
     STATE["guestResult"] = result
+
+    # NGHIEM cua Giai doan 2 khong con hieu luc: no duoc tinh tu vi tri cac buoi
+    # thinh giang vua doi (xem solve_resident_phase, tham so frozen_guest_lessons).
+    # Giu lai la hien mot lich khong con ton trong GD1 nua.
+    #
+    # NHUNG khong duoc xoa trang: phan lon lop co huu da co GIO CHOT trong file va
+    # da duoc ghim (nap HK1 2026-2027-3: 108/163 lop). Do la du kien, khong phai
+    # san pham cua solver. Truoc day cho nay dat thang None nen bam "Giai" o buoc 2
+    # la 80 buoi co huu BIEN MAT khoi luoi, phai bam tiep buoc 3 moi thay lai -
+    # giao vu tuong he thong lam mat lich cua minh.
+    #
+    # Dung lai bang dong_bo_ket_qua(chi_pha="RESIDENT"): no dat lai cac buoi co gio
+    # co dinh/ghim, gan initial=True nen thanh tien trinh van bao buoc 3 "chua chay"
+    # va nut buoc 3 van la "Giai" (xem WorkflowStrip), khong ai hieu nham day la
+    # ket qua da ghep.
     STATE["residentResult"] = None
-    return jsonify(result)
+    dong_bo_ket_qua(data, chi_pha="RESIDENT")
+    return jsonify({**result, "residentResult": STATE["residentResult"]})
 
 
 @bp.post("/api/solve-resident")

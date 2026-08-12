@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Download, Eraser, Eye, GraduationCap, Lock, LockOpen, Plus, RotateCcw, TriangleAlert, Upload } from "lucide-react";
+import { Download, Eraser, Eye, GraduationCap, Lock, Plus, RotateCcw, TriangleAlert, Upload } from "lucide-react";
 import { useAppData } from "../../context/AppDataContext";
 import SectionEditDrawer from "../manual/SectionEditDrawer";
 import TeacherEditDrawer from "../manual/TeacherEditDrawer";
@@ -10,20 +10,12 @@ import ChotCourseDialog from "../manual/ChotCourseDialog";
 import { FilterSelect } from "@/components/shared/filter-select";
 import { ListSearch } from "@/components/shared/list-search";
 import { Notice } from "@/components/shared/notice";
-import { Pill } from "@/components/shared/pill";
 import { Button } from "@/components/ui/button";
+import SectionTable, { STATUS_META } from "../manual/SectionTable";
 
 const PAGE_STEP = 25;
 
-// Tone thay cho cac class danger/warn/ok cu - dung chung bo 6 tone cua design
-// system VJU. "Thieu gio" la thu chan xep lich -> do; "Tu dong xep" la chap nhan
-// duoc nhung chua chot -> ho phach; "Da chot gio" -> xanh la.
-const STATUS_META = {
-  missing_time: { label: "Thiếu giờ", tone: "red" },
-  ready_auto: { label: "Tự động xếp", tone: "amber" },
-  ready_fixed: { label: "Có giờ cố định", tone: "emerald" },
-};
-
+// STATUS_META dung chung voi bang - xem manual/SectionTable.jsx.
 const STATUS_OPTIONS = Object.entries(STATUS_META).map(([value, m]) => ({
   value,
   label: m.label,
@@ -37,42 +29,6 @@ const CHOT_OPTIONS = [
   { value: "roi", label: "Đã chốt lịch" },
 ];
 
-// Trang thai SAU khi bam "Luu thoi khoa bieu" ben man Thoi khoa bieu (khac
-// STATUS_META o tren - cai do noi ve gio gia dinh/co dinh, khong noi co trung
-// gio hay khong). null = chua bam luu lan nao.
-const SCHEDULE_STATUS_META = {
-  scheduled: { label: "Đã xếp", tone: "emerald" },
-  problem: { label: "Có vấn đề", tone: "red" },
-  missing: { label: "Chưa có giờ", tone: "amber" },
-};
-
-// "Thu" hien so gon (2..7, CN) giong dung cot L cua Excel goc, KHONG dung
-// DAY_LABELS ("Thứ 2") - cot nay trong file that chi ghi 1 so/chu.
-function dayNumber(day) {
-  if (day == null) return "";
-  return day === 6 ? "CN" : day + 2;
-}
-
-// Nhom cac lop (da loc/da cat trang) theo hoc phan, giu THU TU xuat hien -
-// dung de ve rowSpan cho 4 cot muc hoc phan (TT/Ma HP/Ten HP/So TC), tai tao
-// dung kieu "merge-xuong" cua file Excel goc (xem plan/backend _apply merge).
-function groupByCourse(rows) {
-  const groups = [];
-  const byKey = new Map();
-  rows.forEach((c) => {
-    const key = c.courseId ?? `__none_${c.courseName || c.sectionId}`;
-    let g = byKey.get(key);
-    if (!g) {
-      g = { courseId: c.courseId, courseCode: c.courseCode, courseName: c.courseName,
-            credits: c.credits, chot: c.courseChot || null, rows: [] };
-      byKey.set(key, g);
-      groups.push(g);
-    }
-    g.rows.push(c);
-  });
-  return groups;
-}
-
 // Thay the "Nhap lieu thu cong" don gian cu (2 form roi rac, khong co khai niem
 // "hoc phan" tach rieng): bang tong quan mirror 29 cot Excel + click 1 dong mo
 // side-panel (SectionEditDrawer) de hoan thien du lieu. Day la NGUON DUY NHAT
@@ -83,7 +39,8 @@ function groupByCourse(rows) {
 // px-3 py-3 cua shadcn Table se lam no phinh gap may lan va mat cong dung. Chi
 // phan khung (thanh loc, trang thai, nut) chuyen sang design system.
 export default function ManualEntryPage({ role }) {
-  const { data, loading, initManual, doClearManualTimes, doBoChotCourse } = useAppData();
+  const { data, loading, initManual, doClearManualTimes, doBoChotCourse,
+          doBoHocChung } = useAppData();
   const canEdit = role !== "viewer";
 
   // Da BO lenh refreshData() luc mount o day: AppDataProvider nay nap du lieu
@@ -138,7 +95,14 @@ export default function ManualEntryPage({ role }) {
     });
   }, [classes, search, programFilter, cohortFilter, statusFilter, chotFilter]);
   const shown = visible.slice(0, limit);
-  const courseGroups = useMemo(() => groupByCourse(shown), [shown]);
+
+  // Tooltip nhom hoc chung phai goi lop bang MA LOP, khong phai id noi bo (#317)
+  // - dung quy uoc chung cua du an (xem adapters/problemInbox.js).
+  const maLopTheoId = useMemo(
+    () => new Map(classes.map((c) => [c.sectionId, c.classCode])),
+    [classes],
+  );
+  const tenLop = (sid) => maLopTheoId.get(sid) || `#${sid}`;
 
   const tienDoChot = useMemo(() => {
     const m = new Map();
@@ -376,204 +340,18 @@ export default function ManualEntryPage({ role }) {
         </div>
         </div>
 
-        <div className="xls-scroll">
-          <table className="data-table xls-table">
-            {/* Ba vung form phan biet bang NEN (`xls-z-course` / `xls-z-teacher`),
-                khong bang vach ke. Vung con lai (Lop hoc phan) de tran - no chiem
-                da so cot, to nen ca thi bang thanh nang.
-
-                Truoc do dung vach doc 2px, nhung vien bi rang cua khi nguoi dung
-                zoom le (chieu cao o ra so thap phan, moi o lam tron mot kieu) -
-                ma bang 29 cot thi zoom nho lai la phan xa tu nhien. Nen khong co
-                vien de lam tron nen dung vung o moi muc zoom.
-
-                Class dat TRUC TIEP len o, khong dung :nth-child: dong DAU moi nhom
-                co them 4 o merge con dong sau khong, nen chi so cot lech nhau. */}
-            <thead>
-              <tr>
-                <th rowSpan={3} className="xls-z-course">TT</th>
-                <th rowSpan={3} className="xls-z-course">Mã học phần</th>
-                <th rowSpan={3} className="xls-z-course">Tên học phần</th>
-                <th rowSpan={3} className="xls-z-course">Số tín chỉ</th>
-                <th rowSpan={3} className="xls-z-course">Chốt lịch</th>
-                <th rowSpan={3}>Mã lớp học phần</th>
-                <th colSpan={2}>Phân bổ TC</th>
-                <th rowSpan={3}>Khóa</th>
-                <th rowSpan={3}>CTĐT</th>
-                <th rowSpan={3}>Số SV dự kiến</th>
-                <th colSpan={3}>Thời gian</th>
-                <th colSpan={7}>Thông tin giảng viên</th>
-                <th colSpan={2}>Số giờ dạy</th>
-                <th rowSpan={3}>Địa điểm</th>
-                <th rowSpan={3}>Hình thức</th>
-                <th rowSpan={3}>Ngôn ngữ</th>
-                <th rowSpan={3}>Yêu cầu khác</th>
-                <th rowSpan={3}>Ghi chú</th>
-                <th rowSpan={3}>Trạng thái</th>
-                <th rowSpan={3}>Trạng thái lịch</th>
-              </tr>
-              <tr>
-                <th rowSpan={2}>Lý thuyết</th>
-                <th rowSpan={2}>Thực hành</th>
-                <th rowSpan={2}>Thứ</th>
-                <th rowSpan={2}>Tiết đầu</th>
-                <th rowSpan={2}>Tiết cuối</th>
-                <th colSpan={2} className="xls-ref-head">Kỳ trước (để đối chiếu)</th>
-                <th colSpan={5} className="xls-z-teacher">Kỳ này</th>
-                <th rowSpan={2}>Lý thuyết</th>
-                <th rowSpan={2}>Thực hành</th>
-              </tr>
-              <tr>
-                <th className="xls-ref-head">Họ tên GV</th>
-                <th className="xls-ref-head">Đơn vị công tác</th>
-                <th className="xls-z-teacher">Học hàm/vị</th>
-                <th className="xls-z-teacher">Họ và tên GV</th>
-                <th className="xls-z-teacher">Đơn vị công tác</th>
-                <th className="xls-z-teacher">Email</th>
-                <th className="xls-z-teacher">SĐT</th>
-              </tr>
-            </thead>
-            {/* MOI HOC PHAN = MOT <tbody> rieng, khong don het vao 1 tbody.
-                Day vua la HTML dung nghia (tbody = nhom dong), vua la thu duy
-                nhat cho phep to sang CA VUNG khi hover: cac o merge-xuong
-                (Ma/Ten hoc phan/So TC) thuoc ve dong DAU nhom, nen hover 1 dong
-                bang CSS tren <tr> se keo theo o merge cao 7 dong -> vet mau hinh
-                chu L, khong doc duoc dang tro vao dau. Voi tbody rieng thi:
-                  · hover bat ky dong nao -> ca vung hoc phan sang nhe (thay ranh gioi)
-                  · rieng dong dang tro -> dam hon (thay dang nham dong nao)
-                  · o merge CHI theo mau vung, khong theo mau dong. */}
-            {courseGroups.map((g, gi) => (
-              <tbody key={g.courseId ?? `none-${gi}`}>
-                {g.rows.map((c, i) => {
-                const meta = STATUS_META[c.status] || { label: c.status, tone: "slate" };
-                return (
-                  <tr key={c.sectionId} className="sed-row xls-row" onClick={openSection(c.sectionId)}>
-                    {i === 0 && <td className="xls-course xls-z-course" rowSpan={g.rows.length} onClick={openCourse(g.courseId)}>{c.sectionId}</td>}
-                    {i === 0 && <td className="xls-course xls-z-course" rowSpan={g.rows.length} onClick={openCourse(g.courseId)}>{g.courseCode || "—"}</td>}
-                    {i === 0 && <td className="xls-course xls-z-course" rowSpan={g.rows.length} onClick={openCourse(g.courseId)}>{g.courseName || "—"}</td>}
-                    {i === 0 && <td className="xls-course xls-z-course" rowSpan={g.rows.length} onClick={openCourse(g.courseId)}>{g.credits ?? "—"}</td>}
-                    {/* CHOT LICH theo HOC PHAN: o merge xuong ca nhom, dung
-                        nhu Ma/Ten hoc phan - vi chot ap cho MOI lop cua mon,
-                        khong phai cho dong dang tro. */}
-                    {i === 0 && (
-                      <td
-                        className="xls-course xls-z-course xls-chot"
-                        rowSpan={g.rows.length}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {g.chot ? (
-                          <div className="xls-chot-box">
-                            <span className="xls-chot-badge" title={
-                              `Đã chốt bởi ${g.chot.by} lúc ${(g.chot.at || "").replace("T", " ")}` +
-                              (g.chot.note ? ` — ${g.chot.note}` : "")
-                            }>
-                              <Lock className="size-3" />
-                              {/* Chot TU FILE (moi lop deu co gio da thong nhat
-                                  san - quy tac A2) khac chot TAY: giao vu can
-                                  biet mon nao minh da thuc su ra soat. */}
-                              {g.chot.tuFile ? "Chốt theo file" : "Đã chốt"}
-                            </span>
-                            <span className="xls-chot-meta">
-                              {g.chot.by} · {(g.chot.at || "").slice(5, 10).split("-").reverse().join("/")}
-                            </span>
-                            {g.chot.note && <span className="xls-chot-note">{g.chot.note}</span>}
-                            {canEdit && (
-                              <button type="button" className="xls-chot-btn" onClick={handleBoChot(g)} disabled={loading}>
-                                <LockOpen className="size-3" />
-                                Bỏ chốt
-                              </button>
-                            )}
-                          </div>
-                        ) : canEdit && g.courseId != null ? (
-                          <button
-                            type="button"
-                            className="xls-chot-btn"
-                            disabled={loading}
-                            onClick={() => setChotGroup(g)}
-                            title="Ghi giờ đang hiển thị của mọi lớp trong học phần này thành giờ chính thức và ghim cứng"
-                          >
-                            <Lock className="size-3" />
-                            Chốt lịch
-                          </button>
-                        ) : (
-                          <span className="xls-chot-meta">chưa chốt</span>
-                        )}
-                      </td>
-                    )}
-                    <td>{c.classCode || "—"}</td>
-                    <td>{c.ltCredits ?? "—"}</td>
-                    <td>{c.thCredits ?? "—"}</td>
-                    <td>{c.cohort || "—"}</td>
-                    <td>{c.programLabel}</td>
-                    <td>{c.expectedStudents ?? "—"}</td>
-                    <td>{dayNumber(c.day)}</td>
-                    <td>{c.periodStart ?? "—"}</td>
-                    <td>{c.periodEnd ?? "—"}</td>
-                    <td className="xls-ref">{c.prevTeacherName || "—"}</td>
-                    <td className="xls-ref">{c.prevTeacherOrg || "—"}</td>
-                    {/* MOI GIANG VIEN MOT DONG trong o - dung nhu file Excel goc
-                        ghi ca nhom trong mot o. Truoc day chi hien nguoi dau nen
-                        email/SDT cua nhung nguoi con lai khong doc duoc o dau, va
-                        khong bam vao ho de khai gio duoc. Bam vao TUNG dong -> mo
-                        ngan sua CHINH nguoi do (co muc "Gio co the day"). */}
-                    {["title", "name", "org", "email", "phone"].map((truong) => (
-                      <td key={truong} className="xls-z-teacher xls-gv-cell">
-                        {(c.teachers?.length ? c.teachers : [null]).map((t, k) => (
-                          <button
-                            type="button"
-                            key={t ? t.id : k}
-                            // Gio da chot cua lop nam NGOAI khung nguoi do da khai:
-                            // he thong CO Y khong doi gio da chot, nhung phai thay
-                            // duoc cho venh nay chu khong de giao vu tu doan.
-                            className={
-                              "xls-gv-line" + (t?.outsideDeclared ? " xls-gv-venh" : "")
-                            }
-                            title={
-                              t
-                                ? t.outsideDeclared
-                                  ? `${t.name} — giờ đã chốt của lớp này NGOÀI khung giờ ${t.name} đã khai. Hệ thống giữ nguyên giờ đã chốt; sửa giờ lớp hoặc khung giờ đã khai nếu cần.`
-                                  : `${t.name} — bấm để sửa / khai giờ có thể dạy`
-                                : undefined
-                            }
-                            onClick={t ? openTeacher(t.id) : undefined}
-                          >
-                            {(truong === "name" ? t?.name : t?.[truong]) || "—"}
-                          </button>
-                        ))}
-                      </td>
-                    ))}
-                    <td>{c.teachingHoursLt ?? "—"}</td>
-                    <td>{c.teachingHoursTh ?? "—"}</td>
-                    <td>{c.location || "—"}</td>
-                    <td>{c.teachingMode || "—"}</td>
-                    <td>{c.language || "—"}</td>
-                    <td>{c.otherRequirements || "—"}</td>
-                    <td>{c.notes || "—"}</td>
-                    <td><Pill tone={meta.tone}>{meta.label}</Pill></td>
-                    <td>
-                      {c.scheduleStatus
-                        ? (() => {
-                          const sm = SCHEDULE_STATUS_META[c.scheduleStatus] || { label: c.scheduleStatus, tone: "slate" };
-                          return <Pill tone={sm.tone}>{sm.label}</Pill>;
-                        })()
-                        : "—"}
-                    </td>
-                  </tr>
-                );
-                })}
-              </tbody>
-            ))}
-            {shown.length === 0 && (
-              <tbody>
-                <tr>
-                  <td colSpan={29} className="text-muted-foreground p-6 text-center">
-                    Chưa có lớp nào khớp bộ lọc.
-                  </td>
-                </tr>
-              </tbody>
-            )}
-          </table>
-        </div>
+        <SectionTable
+          rows={shown}
+          canEdit={canEdit}
+          loading={loading}
+          tenLop={tenLop}
+          onOpenSection={openSection}
+          onOpenCourse={openCourse}
+          onOpenTeacher={openTeacher}
+          onChot={setChotGroup}
+          onBoChot={handleBoChot}
+          onBoHocChung={doBoHocChung}
+        />
 
         {visible.length > shown.length && (
           <div className="flex justify-center border-t p-3">

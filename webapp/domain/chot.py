@@ -9,6 +9,7 @@ lam xe dich mon da chot.
 
 import datetime
 
+from domain.hoc_chung import thanh_vien
 from domain.time_rules import apply_section_time
 from state import KHONG_TRUYEN, STATE
 
@@ -60,15 +61,35 @@ def khoa_vi_da_chot(data, section_id, time_info=KHONG_TRUYEN):
     s = data["sections"].get(section_id)
     if s is None:
         return None
-    hp = data.get("courses", {}).get(s.get("course_id")) or {}
-    chot = hp.get("chot")
-    if not chot:
-        return None
     if time_info is not KHONG_TRUYEN and not gio_doi(s, time_info):
         return None
-    return (f"Học phần “{hp.get('name') or ''}” đã chốt lịch "
-            f"({chot.get('by')}, {(chot.get('at') or '')[:16].replace('T', ' ')}). "
-            f"Bỏ chốt học phần trước khi sửa giờ.")
+
+    hp = data.get("courses", {}).get(s.get("course_id")) or {}
+    chot = hp.get("chot")
+    if chot:
+        return (f"Học phần “{hp.get('name') or ''}” đã chốt lịch "
+                f"({chot.get('by')}, {(chot.get('at') or '')[:16].replace('T', ' ')}). "
+                f"Bỏ chốt học phần trước khi sửa giờ.")
+
+    # HOC CHUNG: khoa lan theo NHOM. Lop nay khong thuoc mon da chot, nhung neu no
+    # HOC CHUNG voi mot lop thuoc mon DA CHOT thi sua gio no la dich luon gio ma
+    # mon kia da cam ket voi giang vien - solver ep ca nhom cung slot.
+    #
+    # Chi lan CAI KHOA, khong lan trang thai chot: chot van theo HOC PHAN nhu cu.
+    # Chot lay ca hoc phan kia thi qua rong - hoc phan do con nhung lop KHAC khong
+    # hoc chung, khong co ly gi cam ket ho theo.
+    for sid_khac in thanh_vien(data, section_id):
+        if sid_khac == section_id:
+            continue
+        s2 = data["sections"].get(sid_khac) or {}
+        hp2 = data.get("courses", {}).get(s2.get("course_id")) or {}
+        chot2 = hp2.get("chot")
+        if chot2:
+            return (f"Lớp này học chung buổi với “{s2.get('class_code') or f'#{sid_khac}'}” "
+                    f"thuộc học phần “{hp2.get('name') or ''}” đã chốt lịch "
+                    f"({chot2.get('by')}, {(chot2.get('at') or '')[:16].replace('T', ' ')}). "
+                    f"Bỏ chốt học phần đó, hoặc tách nhóm học chung, trước khi sửa giờ.")
+    return None
 
 
 def chot_hoc_phan(data, course_id, nguoi, ghi_chu):

@@ -36,6 +36,9 @@ STATE = {
     # Ban vua doc tu file, CHUA ap dung (buoc xem truoc) - xem
     # api/lecturers.py: api_manual_lecturers_preview.
     "co_huu_pending": None,
+    # MOC HOAN TAC cho nut "Huy thay doi" o man Thoi khoa bieu: ban chup toan bo
+    # trang thai tai lan LUU gan nhat (va lan nap file dau tien). Xem domain/hoan_tac.py.
+    "moc_hoan_tac": None,
 }
 
 

@@ -5,8 +5,11 @@ from flask import Blueprint, jsonify, request
 
 from api.common import can_du_lieu, loi, tra_du_lieu
 from domain.chot import khoa_vi_da_chot
-from domain.pinning import attach_ca_hai, attach_override_metadata, detect_move_conflict
+from domain.hoc_chung import thanh_vien
+from domain.luoi import attach_ca_hai, attach_override_metadata, dong_bo_ket_qua
+from domain.pinning import bo_ghim_ca_nhom, detect_move_conflict
 from domain.time_rules import apply_section_time, overlaps
+from domain.hoan_tac import dat_moc, hoan_tac
 from snapshot import save_snapshot
 from state import DAY_LABELS_VN, STATE
 
@@ -60,14 +63,22 @@ def api_move_lesson(data):
         return loi("Ô này đang trùng giờ giảng viên hoặc hết phòng — cần ghi lý do để xác nhận.",
                    409, conflict=conflict)
 
-    STATE["overrides"][section_id] = {"slot": slot, "reason": reason, "problem": conflict}
-    # Ghim tay de len tren moi thu -> khong con la lop "de he thong xep lai".
-    STATE["bo_ghim"].discard(section_id)
+    # HOC CHUNG: keo mot thanh vien la keo CA NHOM - chung la mot buoi, de lai
+    # mot lop o o cu la nhom vo va lan Giai sau bao trung gio tro lai.
+    cung_buoi = thanh_vien(data, section_id) or [section_id]
+    for sid_khac in cung_buoi:
+        STATE["overrides"][sid_khac] = {"slot": slot, "reason": reason, "problem": conflict}
+        # Ghim tay de len tren moi thu -> khong con la lop "de he thong xep lai".
+        STATE["bo_ghim"].discard(sid_khac)
 
     kind = s["teacher_type"]
     result = STATE["guestResult"] if kind == "GUEST" else STATE["residentResult"]
     if result is not None:
         by_id = {l["id"]: l for l in result["lessons"]}
+        for sid_khac in cung_buoi:
+            if sid_khac in by_id and sid_khac != section_id:
+                l = by_id[sid_khac]
+                l["day"], l["period"], l["slot"] = day, period, slot
         if section_id in by_id:
             l = by_id[section_id]
             l["day"], l["period"], l["slot"] = day, period, slot
@@ -114,10 +125,13 @@ def api_clear_override(data):
     # Ghi vao STATE['bo_ghim'] de ca hai duong ghim cung tha lop nay ra.
     if section_id in data["sections"]:
         STATE["bo_ghim"].add(section_id)
+    # HOC CHUNG: tha mot nua thi lan Giai sau mot lop bi ghim cho cu, mot lop tu do
+    # chon - hai lop "cung mot buoi" khong con o cung o gio.
+    cung_nhom = bo_ghim_ca_nhom(data, section_id)
 
     attach_ca_hai(data)
     return jsonify({
-        "sectionId": section_id, "cleared": True,
+        "sectionId": section_id, "cleared": True, "hocChungAlso": cung_nhom,
         "guestResult": STATE["guestResult"], "residentResult": STATE["residentResult"],
     })
 
@@ -174,6 +188,10 @@ def api_save_schedule(data):
         for i in range(len(group)):
             for j in range(i + 1, len(group)):
                 a, b = group[i], group[j]
+                # HOC CHUNG: hai lop cung nhom la MOT buoi, cung gio la DUNG Y -
+                # khong phai trung gio.
+                if sc.cung_nhom_hoc_chung(data, a["id"], b["id"]):
+                    continue
                 slot_a = a["day"] * slots_per_day + (a["period_start"] - 1)
                 slot_b = b["day"] * slots_per_day + (b["period_start"] - 1)
                 if overlaps(slot_a, a["duration"], slot_b, b["duration"]):
@@ -191,6 +209,28 @@ def api_save_schedule(data):
         else:
             s["schedule_status"] = "scheduled"
 
+    # Gio vua duoc ghi thanh gio CHINH THUC cua lop - dong bo lai luoi de nhan/
+    # ten/giai doan cua tung buoi khop voi ban vua luu (vi tri khong doi: chinh
+    # vi tri dang hien vua duoc sao sang sections).
+    dong_bo_ket_qua(data)
     save_snapshot()
+    # Moi lan luu la mot "ban da chot" - ghi moc de nut "Huy thay doi" quay ve
+    # duoc dung day (xem domain/hoan_tac.py: dat_moc).
+    dat_moc("lần lưu thời khoá biểu")
     return tra_du_lieu(data, savedCount=saved_count, problemCount=problem_count,
                        missingCount=missing_count)
+
+
+@bp.post("/api/manual/hoan-tac")
+@can_du_lieu
+def api_hoan_tac(data):
+    """"Huy thay doi": tra toan bo ve dung trang thai cua lan LUU gan nhat (hoac
+    luc vua nap file, neu chua luu lan nao).
+
+    Khac han "Bo ghim" (mot buoi) va nut "Huy" o banner keo-tha (mot buoi CHUA
+    luu): cai nay quay lai CA MAN - gio cua moi lop, ghim, trang thai chot, nhom
+    hoc chung va ca luoi dang hien."""
+    tt, err = hoan_tac()
+    if err:
+        return loi(err)
+    return tra_du_lieu(STATE["data"], hoanTacVe=tt)

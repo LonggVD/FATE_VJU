@@ -46,3 +46,16 @@ export const deleteManualSection = (sectionId) => apiDelete(`/api/manual/section
 // "Xoa gio" hang loat - dat lai Thu/Tiet dau/Tiet cuoi cua nhieu lop thanh
 // "de he thong tu xep" cung mot luc (xem app.py: api_manual_clear_times).
 export const clearManualTimes = (sectionIds) => apiPost("/api/manual/clear-times", { sectionIds });
+
+// HOC CHUNG: danh dau nhieu lop (nhieu ma mon) la MOT buoi day. KHONG chi la tat
+// canh bao - backend ep solver xep ca nhom vao cung mot slot va chi tinh mot
+// phong, nen giai lai bao nhieu lan ca nhom cung dung yen (xem
+// webapp/domain/hoc_chung.py).
+export const markHocChung = (sectionIds, payload = {}) =>
+  apiPost("/api/manual/hoc-chung", { sectionIds, ...payload });
+export const unmarkHocChung = (groupId) => apiDelete(`/api/manual/hoc-chung/${groupId}`);
+
+// "Huy thay doi" o man Thoi khoa bieu: tra TOAN BO trang thai ve dung lan LUU gan
+// nhat (hoac luc vua nap file, neu chua luu lan nao) - gio cua moi lop, ghim,
+// trang thai chot, nhom hoc chung va ca luoi. Xem webapp/domain/hoan_tac.py: dat_moc().
+export const hoanTac = () => apiPost("/api/manual/hoan-tac");

@@ -10,6 +10,7 @@
 // NHAN chu nen khong dung de tinh chong lan duoc.
 
 import { slotToDayPeriod } from "./dayPeriod";
+import { taoCungBuoi } from "./hocChung";
 import { slotRangeLabel } from "./crossConflictAnalysis";
 
 function overlaps(a, durA, b, durB) {
@@ -68,6 +69,9 @@ export function analyzeUnplaced(guestResult, data) {
   // Ma lop hoc phan de hien THAY CHO "#<id noi bo>" (giong cach lam o
   // scheduleView.js) - unplaced[] tu backend khong tu co field nay.
   const classCodeById = new Map((data?.classes ?? []).map((c) => [c.sectionId, c.classCode]));
+  // HOC CHUNG: buoi cung nhom KHONG phai thu pham chan cho - chung o cung o gio
+  // theo dung y giao vu, va solver da coi ca nhom la mot buoi mot phong.
+  const cungBuoi = taoCungBuoi(data);
 
   const items = unplaced.map((u) => {
     const sub = subById.get(u.id);
@@ -83,6 +87,7 @@ export function analyzeUnplaced(guestResult, data) {
       const tidsCuaLop = u.teacherIds?.length ? u.teacherIds : [u.teacherId];
       const teacherBlockers = placed
         .filter((l) => {
+          if (cungBuoi(u.id, l.id)) return false;
           const tidsCuaBuoi = l.teacherIds?.length ? l.teacherIds : [l.teacherId];
           return (
             tidsCuaBuoi.some((t) => tidsCuaLop.includes(t)) &&
@@ -91,7 +96,8 @@ export function analyzeUnplaced(guestResult, data) {
         })
         .map((l) => ({ ...l, classCode: classCodeById.get(l.id) || null }));
       const sameRoomCount = placed.filter(
-        (l) => l.roomType === u.roomType && overlaps(w, duration, l.slot, l.duration),
+        (l) => !cungBuoi(u.id, l.id) && l.roomType === u.roomType
+          && overlaps(w, duration, l.slot, l.duration),
       ).length;
       const pool = pools[u.roomType] ?? 0;
       const roomFull = pool > 0 && sameRoomCount >= pool;

@@ -16,6 +16,7 @@
 //   - Dong nghi trung lap trong file nguon -> loai moi, truoc day khong ai bao
 
 import { slotToDayPeriod } from "./dayPeriod";
+import { taoCungBuoi } from "./hocChung";
 import { slotRangeLabel } from "./crossConflictAnalysis";
 import { analyzeSubmissions, SUB_STATE } from "./submissionQueue";
 import { analyzeUnplaced, REASON_META, UNPLACED_REASON } from "./unplacedAnalysis";
@@ -74,7 +75,7 @@ function pairKey(a, b) {
 // Quet TOAN BO giang vien thinh giang tim cap buoi chac chan dung gio.
 // Rong hon check_cross_program_conflicts o backend: ham do co y bo qua GV chi day
 // 1 chuong trinh, ma tren du lieu that 4/5 vu dung lai chinh la loai do.
-function scanTeacherClashes(rows) {
+function scanTeacherClashes(rows, cungBuoi = () => false) {
   const byTeacher = new Map();
   for (const r of rows) {
     if (r.state !== SUB_STATE.SET) continue;
@@ -102,7 +103,8 @@ function scanTeacherClashes(rows) {
           }
           if (!always) break;
         }
-        if (always) out.push({ teacherId, a, b });
+        // HOC CHUNG: cung gio la DUNG Y, khong phai trung.
+        if (always && !cungBuoi(a.sectionId, b.sectionId)) out.push({ teacherId, a, b });
       }
     }
   }
@@ -123,7 +125,7 @@ function scanTeacherClashes(rows) {
 // Nguon nay doc thang vi tri thuc (ca hai giai doan, cong ca buoi dang cho luu)
 // nen bat duoc ngay khi vua tha. Dung chung cong thuc overlaps() voi
 // _detect_move_conflict ben backend de hai noi khong bao lech nhau.
-function scanPlacedClashes(lessons) {
+function scanPlacedClashes(lessons, cungBuoi = () => false) {
   const byTeacher = new Map();
   for (const l of lessons) {
     if (l.teacherId == null || l.slot == null) continue;
@@ -142,6 +144,8 @@ function scanPlacedClashes(lessons) {
       for (let j = i + 1; j < list.length; j++) {
         const a = list[i];
         const b = list[j];
+        // HOC CHUNG: hai buoi cung nhom PHAI o cung o gio - do la muc dich.
+        if (a.id !== b.id && cungBuoi(a.id, b.id)) continue;
         if (overlaps(a.slot, a.duration ?? 1, b.slot, b.duration ?? 1)) {
           out.push({ teacherId, a, b });
         }
@@ -230,6 +234,11 @@ export function buildProblemInbox(data, guestResult, residentResult = null, pend
   const classCodeById = new Map((data?.classes ?? []).map((c) => [c.sectionId, c.classCode]));
   const codeOf = (id) => classCodeById.get(id) || `#${id}`;
 
+  // HOC CHUNG: cap lop cung mot buoi thi cung gio la DUNG Y - khong phai
+  // "trung giang vien". Backend quyet dinh (webapp/domain/hoc_chung.py), o day
+  // chi dung lai ket luan.
+  const cungBuoi = taoCungBuoi(data);
+
   const sq = analyzeSubmissions(data);
   const slotsPerDay = sq.slotsPerDay;
   // analyzeUnplaced doc guestResult.lessons de tim buoi nao DANG CHIEM CHO cua
@@ -280,7 +289,7 @@ export function buildProblemInbox(data, guestResult, residentResult = null, pend
   const rowById = new Map(rowsHieuLuc.map((r) => [r.sectionId, r]));
 
   // --- 1. Cap dung gio, xet tren khung gio hieu luc ---
-  for (const { teacherId, a, b } of scanTeacherClashes(rowsHieuLuc)) {
+  for (const { teacherId, a, b } of scanTeacherClashes(rowsHieuLuc, cungBuoi)) {
     const dup = looksDuplicated(a, b);
     const type = dup ? PROBLEM_TYPE.DUPLICATE : PROBLEM_TYPE.CLASH;
     const { day, period } = slotToDayPeriod(a.windowSlots[0], slotsPerDay);
@@ -324,7 +333,7 @@ export function buildProblemInbox(data, guestResult, residentResult = null, pend
   // huu. Gop vao cung ho id `CLASH:<cap>` nen neu nguon 1 da bao roi thi bo qua,
   // khong dem hai lan.
   const daCo = new Set(items.map((it) => it.id));
-  for (const { teacherId, a, b } of scanPlacedClashes(daXep)) {
+  for (const { teacherId, a, b } of scanPlacedClashes(daXep, cungBuoi)) {
     // Giu nguyen phan loai "nghi trung lap" khi hai buoi giong het nhau: neu chi
     // biet chung dung gio thi se bao thanh "trùng giảng viên" va mat hoan toan
     // goi y doi chieu file nguon - trong khi day moi la cach xu ly dung.

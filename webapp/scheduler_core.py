@@ -111,6 +111,55 @@ def teacher_display(data, teacher_id):
     return f"{name} (GV#{teacher_id})" if name else f"GV {teacher_id}"
 
 
+# --- HOC CHUNG ------------------------------------------------------------
+# Mot nhom hoc chung = MOT buoi day vat ly, ghi thanh NHIEU lop vi co nhieu ma
+# mon (vd ECE3083 "Vat lieu tien tien trong xay dung" + BCE3023 "Vat lieu tien
+# tien trong ky thuat": cung thay, cung phong LAB, cung Thu 4 tiet 2-4, sinh vien
+# hai chuong trinh ngoi chung).
+#
+# Doc THANG tu data["hoc_chung"] chu khong nhan qua tham so: `data` la toan bo
+# hop dong giua module nay va tang tren, va giu duoc nguyen tac "scheduler_core
+# khong import gi tu webapp".
+#
+# Chinh sach (tao/xoa/validate nhom) nam o domain/hoc_chung.py - o day chi co
+# hai phep TRA CUU ma solver va cac ham kiem trung can.
+
+def cac_nhom_hoc_chung(data):
+    """Danh sach nhom, moi nhom la list section_id (chi giu lop CON TON TAI)."""
+    ra = []
+    for nhom in data.get("hoc_chung") or []:
+        ds = [sid for sid in nhom.get("sectionIds") or [] if sid in data["sections"]]
+        if len(ds) > 1:
+            ra.append(sorted(ds))
+    return ra
+
+
+def dai_dien_hoc_chung(data):
+    """{section_id: section_id DAI DIEN cua nhom}. Lop khong thuoc nhom nao thi
+    khong co trong dict.
+
+    Dai dien = id nho nhat, on dinh giua cac lan giai. Solver rang buoc moi thanh
+    vien BANG dai dien (cung start, cung placed) va chi dua interval cua DAI DIEN
+    vao NoOverlap/Cumulative - nho vay ca nhom la mot buoi, mot phong, va khong
+    tu bao trung gio voi chinh minh."""
+    ra = {}
+    for ds in cac_nhom_hoc_chung(data):
+        for sid in ds:
+            ra[sid] = ds[0]
+    return ra
+
+
+def cung_nhom_hoc_chung(data, sid_a, sid_b):
+    """Hai lop nay la CUNG MOT buoi (hoc chung) chu khong phai trung gio?
+
+    Moi cho kiem trung giang vien deu phai goi ham nay - xem danh sach o
+    domain/hoc_chung.py."""
+    if sid_a == sid_b:
+        return False
+    dd = dai_dien_hoc_chung(data)
+    return sid_a in dd and dd[sid_a] == dd.get(sid_b)
+
+
 
 
 def check_cross_program_conflicts(data):
@@ -122,11 +171,20 @@ def check_cross_program_conflicts(data):
     CP-SAT giai toan bo (CP-SAT giai ca xung dot voi GV/phong khac nua)."""
     p = data["params"]
 
+    # HOC CHUNG: ca nhom la MOT buoi -> chi xet DAI DIEN. Giu ca nhom thi ham nay
+    # bao "khong ton tai cach xep nao khong trung" cho dung cai cap ma giao vu da
+    # noi ro la hoc chung.
+    dai_dien = dai_dien_hoc_chung(data)
+
     guest_sections_by_teacher = {}
     for s in data["sections"].values():
-        if s["teacher_type"] == "GUEST":
-            for tid in (s.get("teacher_ids") or [s["teacher_id"]]):
-                guest_sections_by_teacher.setdefault(tid, []).append(s)
+        if s["teacher_type"] != "GUEST":
+            continue
+        dd = dai_dien.get(s["id"])
+        if dd is not None and dd != s["id"]:
+            continue
+        for tid in (s.get("teacher_ids") or [s["teacher_id"]]):
+            guest_sections_by_teacher.setdefault(tid, []).append(s)
 
     results = []
     for tid, secs in guest_sections_by_teacher.items():
@@ -229,6 +287,16 @@ def solve_guest_phase(data, time_limit_s=30):
     intervals_by_roomtype = {"LT": [], "LAB": []}
     day_load_terms = {d: [] for d in range(p["numDays"])}  # cho muc tieu dan ngay (phu)
 
+    # HOC CHUNG: ca nhom la MOT buoi -> chi DAI DIEN gop mat trong NoOverlap
+    # (khong tu bao trung voi chinh minh) va Cumulative (chi ton 1 phong), con
+    # cac thanh vien bi rang buoc BANG dai dien o cuoi vong lap.
+    dai_dien = dai_dien_hoc_chung(data)
+    gv_cua_nhom = {}   # sid dai dien -> hop teacher_ids cua CA NHOM
+    for s in guest_sections:
+        dd = dai_dien.get(s["id"])
+        if dd is not None:
+            gv_cua_nhom.setdefault(dd, set()).update(s.get("teacher_ids") or [s["teacher_id"]])
+
     for s in guest_sections:
         sid = s["id"]
         windows = data["submissions"][sid]
@@ -246,12 +314,27 @@ def solve_guest_phase(data, time_limit_s=30):
 
         starts[sid] = start
         placed[sid] = is_placed
+        dd = dai_dien.get(sid)
+        if dd is not None and dd != sid:
+            continue  # thanh vien: rang buoc theo dai dien, khong chiem GV/phong rieng
         # Doi voi lesson co NHIEU GV dong giang day (teacher_ids), cung 1 interval
         # duoc dua vao NoOverlap cua TAT CA nguoi do - dam bao khong ai trong nhom
         # bi trung lich o cho khac, ma khong nhan doi nhu cau phong.
-        for tid in (s.get("teacher_ids") or [s["teacher_id"]]):
+        # Lop la DAI DIEN mot nhom hoc chung thi lay hop GV cua ca nhom: buoi do
+        # co mat CA HO, nen ho khong the day cho khac cung gio.
+        for tid in (gv_cua_nhom.get(sid) or s.get("teacher_ids") or [s["teacher_id"]]):
             intervals_by_teacher.setdefault(tid, []).append(interval)
         intervals_by_roomtype[s["room_type"]].append(interval)
+
+    # Thanh vien nhom hoc chung: CUNG gio va CUNG so phan voi dai dien.
+    for ds in cac_nhom_hoc_chung(data):
+        rep = ds[0]
+        if rep not in starts:
+            continue  # nhom nay khong thuoc pha nay
+        for sid in ds[1:]:
+            if sid in starts:
+                model.Add(starts[sid] == starts[rep])
+                model.Add(placed[sid] == placed[rep])
 
     for ivs in intervals_by_teacher.values():
         if len(ivs) > 1:
@@ -380,15 +463,37 @@ def solve_resident_phase(data, frozen_guest_lessons, forbidden=None, time_limit_
     # ho da bi chiem -> xep chong nhau. Do tren HK2: 2 GV nam o ca hai giai doan,
     # va co lan chay ra dung 1 o chong nhau (solver co nhieu loi giai toi uu nen
     # khong phai lan nao cung tro).
+    # HOC CHUNG o Giai doan 1: chi dong bang DAI DIEN. Neu dong bang ca nhom thi
+    # hai interval CO DINH trung khit nhau (cung slot, cung GV) cung vao
+    # AddNoOverlap cua nguoi do -> mo hinh INFEASIBLE ngay, Giai doan 2 mat trang
+    # ket qua. Phong cung vay: mot buoi chi ton mot phong.
+    dai_dien = dai_dien_hoc_chung(data)
     for g in frozen_guest_lessons:
+        dd = dai_dien.get(g["id"])
+        if dd is not None and dd != g["id"]:
+            continue
         iv = model.NewFixedSizeIntervalVar(
             g["slot"], g.get("duration", p["duration"]), f"frozen_{g['id']}")
         intervals_by_roomtype[g["roomType"]].append(iv)
-        for tid in (g.get("teacherIds") or [g["teacherId"]]):
+        # Dai dien mang theo GV cua CA NHOM hoc chung (buoi do co mat ca ho).
+        gv = set(g.get("teacherIds") or [g["teacherId"]])
+        if dd is not None:
+            for sid in next((x for x in cac_nhom_hoc_chung(data) if x[0] == dd), []):
+                s2 = data["sections"].get(sid) or {}
+                gv.update(s2.get("teacher_ids") or ([s2["teacher_id"]] if s2 else []))
+        for tid in gv:
             intervals_by_teacher.setdefault(tid, []).append(iv)
 
     on_day_by_section = {}  # sid -> [bool theo ngay] - dung cho muc tieu dan ngay (phu)
     pending_ids = set(data.get("pending_section_ids") or [])
+
+    # Hop GV cua tung nhom hoc chung o pha nay - dai dien mang theo ca nhom (xem
+    # solve_guest_phase, cung mot ly le).
+    gv_cua_nhom = {}
+    for s in resident_sections:
+        dd = dai_dien.get(s["id"])
+        if dd is not None:
+            gv_cua_nhom.setdefault(dd, set()).update(s.get("teacher_ids") or [s["teacher_id"]])
 
     for s in resident_sections:
         sid = s["id"]
@@ -474,9 +579,22 @@ def solve_resident_phase(data, frozen_guest_lessons, forbidden=None, time_limit_
             # Khong xep duoc THAT (khung da khai khong con cho) - de solver bao ra
             # thay vi am tham xep ra ngoai khung GV da khai.
             model.Add(is_placed == 0)
-        for tid in (s.get("teacher_ids") or [s["teacher_id"]]):
+        dd = dai_dien.get(sid)
+        if dd is not None and dd != sid:
+            continue  # thanh vien hoc chung: xem khoi rang buoc o cuoi
+        for tid in (gv_cua_nhom.get(sid) or s.get("teacher_ids") or [s["teacher_id"]]):
             intervals_by_teacher.setdefault(tid, []).append(interval)
         intervals_by_roomtype[s["room_type"]].append(interval)
+
+    # Thanh vien nhom hoc chung: CUNG gio va CUNG so phan voi dai dien.
+    for ds in cac_nhom_hoc_chung(data):
+        rep = ds[0]
+        if rep not in starts:
+            continue  # nhom nay khong thuoc pha nay
+        for sid in ds[1:]:
+            if sid in starts:
+                model.Add(starts[sid] == starts[rep])
+                model.Add(placed[sid] == placed[rep])
 
     for ivs in intervals_by_teacher.values():
         if len(ivs) > 1:

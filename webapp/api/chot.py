@@ -9,8 +9,8 @@ domain/chot.py cho quy tac.
 from flask import Blueprint, jsonify, request
 
 from api.common import can_du_lieu, loi, tra_du_lieu
-from domain.chot import bo_chot_hoc_phan, chot_hoc_phan
-from domain.pinning import attach_ca_hai
+from domain.chot import bo_chot_hoc_phan, chot_hoc_phan, lop_cua_hoc_phan
+from domain.luoi import dong_bo_ket_qua
 from snapshot import save_snapshot
 
 bp = Blueprint("chot", __name__)
@@ -26,7 +26,7 @@ def api_manual_chot_course(data, course_id):
     so, err = chot_hoc_phan(data, course_id, body.get("by"), body.get("note"))
     if err:
         return (jsonify(err), 400) if isinstance(err, dict) else loi(err)
-    attach_ca_hai(data)
+    dong_bo_ket_qua(data, [s["id"] for s in lop_cua_hoc_phan(data, course_id)])
     save_snapshot()
     return tra_du_lieu(data, chotCount=so,
                        courseName=data["courses"][course_id].get("name"))
@@ -41,6 +41,6 @@ def api_manual_bo_chot_course(data, course_id):
     if not data["courses"][course_id].get("chot"):
         return loi("Học phần này chưa được chốt.")
     bo_chot_hoc_phan(data, course_id)
-    attach_ca_hai(data)
+    dong_bo_ket_qua(data, [s["id"] for s in lop_cua_hoc_phan(data, course_id)])
     save_snapshot()
     return tra_du_lieu(data, courseName=data["courses"][course_id].get("name"))

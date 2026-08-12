@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
-"""GHIM / BO GHIM va LICH BAN DAU doc tu file.
+"""GHIM / BO GHIM - rang buoc dua vao solver.
 
 "Ghim" la co che manh nhat trong ca hai pha giai: thay vi sua scheduler_core.py,
 no thu hep MIEN cua buoi bi ghim ve dung mot slot truoc khi goi solver
 (Giai doan 1 qua submissions, Giai doan 2 qua tham so ghim_tay). Nho vay giao vu
 keo-tha xong thi giai lai bao nhieu lan buoi do cung dung yen.
+
+Viec DUNG LUOI hien thi tu cac ghim nay nam o domain/luoi.py.
 """
 
 import contextlib
-import datetime
 
 import scheduler_core as sc
+from domain.hoc_chung import thanh_vien
 from domain.time_rules import apply_section_time, overlaps
 from state import STATE
 
@@ -35,7 +37,12 @@ def detect_move_conflict(data, section_id, slot):
     # Trung GV xet theo CA NHOM dong giang (giao cua hai tap teacher_ids), khong
     # chi GV chinh: solver rang buoc ca nhom nen neu chi so GV chinh o day thi
     # keo-tha se bao "khong sao" cho dung cai cho ma thuat toan coi la trung.
+    #
+    # HOC CHUNG duoc tru ra: cac lop cung nhom la MOT buoi, chung PHAI o cung o
+    # gio - do la muc dich, khong phai xung dot. Ke ca o phong: mot buoi mot phong.
     my_tids = set(s.get("teacher_ids") or [s["teacher_id"]])
+    cung_buoi = set(thanh_vien(data, section_id))
+    placed = [l for l in placed if l["id"] not in cung_buoi]
     teacher_blockers = [
         l for l in placed
         if my_tids.intersection(l.get("teacherIds") or [l["teacherId"]])
@@ -58,46 +65,79 @@ def detect_move_conflict(data, section_id, slot):
     }
 
 
-def lich_ban_dau(data):
-    """Dung LICH BAN DAU tu cac lop DA CHOT GIO trong file, khong chay solver.
+def ghim_theo_gio_form(data, sid, time_info):
+    """Cap nhat GHIM sau khi mot form o "Du lieu hoc phan" dat/xoa gio cua lop.
 
-    Vi sao can: nap file xong, man "Thoi khoa bieu" bao "Chua co lich nao - bam
-    Giai o buoc 2" du file da chot gio cho phan lon cac lop (HK1-2: 246/343). Giao
-    vu phai bam Giai moi thay duoc chinh cai minh vua nap - trong khi nhung gio do
-    la DA CHOT, khong phai do thuat toan xep.
+    PHAI goi o moi cho form ghi gio. Bo qua buoc nay la loi da tung xay ra: nap
+    file xong, MOI lop co gio deu duoc ghim (ghim_gio_da_chot). Giao vu sua Thu/
+    Tiet trong form -> section doi sang gio moi, nhung ghim VAN tro gio cu, va
+    ghim thang o ca ba noi:
+      - bang "Du lieu hoc phan" in lai gio CU (build_classes_list doc overrides),
+        nen cong sua vua roi nhu bien mat;
+      - luoi Thoi khoa bieu giu buoi o o cu;
+      - lan Giai lai ke tiep bi ep `submissions=[slot cu]` nen lop nhay ve cho cu.
 
-    Tra ve (ket_qua_GD1, ket_qua_GD2) dung khuon solver tra ve, kem co
-    initial=True de UI biet day KHONG phai ket qua da giai (thanh tien trinh van
-    hien "chua chay", nut buoc 3 van cho chay buoc 2 truoc).
+    Gio do co dinh la mot QUYET DINH cua con nguoi, y het keo-tha tren luoi - nen
+    ghim theo dung gio moi. Xoa gio ("de he thong tu xep") thi go ghim de solver
+    duoc tu do chon lai.
     """
-    p = data["params"]
-    theo_pha = {"GUEST": [], "RESIDENT": []}
-    for sid, s in data["sections"].items():
-        if s.get("time_assumed") or s.get("original_slot") is None:
+    if time_info is None:
+        STATE["overrides"].pop(sid, None)
+        return
+    slot = data["sections"][sid].get("original_slot")
+    if slot is None:
+        STATE["overrides"].pop(sid, None)
+        return
+    STATE["overrides"][sid] = {
+        "slot": slot, "reason": "Giờ đã nhập ở Dữ liệu học phần", "problem": None,
+    }
+    # Gio vua go tay la y kien MOI NHAT -> khong con la lop "cho he thong xep lai".
+    STATE["bo_ghim"].discard(sid)
+
+
+def lan_gio_sang_nhom(data, sid, time_info):
+    """Dat CUNG mot gio cho moi lop HOC CHUNG voi sid. Tra ve cac sid vua doi.
+
+    PHAI goi o moi cho form ghi gio (sua lop, xoa gio, xoa gio hang loat). Bo qua
+    la nhom vo ngay: do thuc te truoc khi co ham nay, doi Thu/Tiet cua lop A qua
+    form thi A sang slot moi con B o lai slot cu - hai lop "cung mot buoi" nam hai
+    o gio khac nhau, va lan Giai sau solver ep chung ve cung slot theo mot trong
+    hai gio do (khong biet gio nao) roi bao trung voi lop khac.
+
+    Dung apply_section_time + ghim_theo_gio_form y nhu duong sua tay: gio do cung
+    la mot quyet dinh cua con nguoi, chi la ap cho ca nhom."""
+    doi = []
+    for sid_khac in thanh_vien(data, sid):
+        if sid_khac == sid:
             continue
-        day, period = divmod(s["original_slot"], p["slotsPerDay"])
-        theo_pha.setdefault(s["teacher_type"], []).append({
-            "id": sid, "teacherId": s["teacher_id"],
-            "teacherName": sc.teacher_display(data, s["teacher_id"]),
-            "teacherIds": list(s.get("teacher_ids") or [s["teacher_id"]]),
-            "courseName": s.get("course_name"), "program": s["program"],
-            "programLabel": sc.section_program_label(data, s),
-            "coordinator": ", ".join(sc.section_coordinators(data, s)),
-            "roomType": s["room_type"], "day": day, "period": period,
-            "slot": s["original_slot"], "duration": s["duration"],
-            "teacherType": s["teacher_type"], "status": "DRAFT",
-        })
+        s = data["sections"].get(sid_khac)
+        if s is None:
+            continue
+        teacher = data["teachers"].get((s.get("teacher_ids") or [s["teacher_id"]])[0])
+        if teacher is None:
+            continue
+        apply_section_time(data, sid_khac, teacher, s["duration"], time_info)
+        ghim_theo_gio_form(data, sid_khac, time_info)
+        # Gio cu khong con -> "Trang thai lich" het nghia (giong api_manual_clear_times).
+        if time_info is None:
+            s["schedule_status"] = None
+        doi.append(sid_khac)
+    return doi
 
-    def goi(loai):
-        lessons = sorted(theo_pha[loai], key=lambda l: l["id"])
-        return {
-            "status": "TU_FILE", "elapsedSeconds": 0.0,
-            "total": sum(1 for s in data["sections"].values() if s["teacher_type"] == loai),
-            "placedCount": len(lessons), "lessons": lessons, "unplaced": [],
-            "initial": True,
-        }
 
-    return goi("GUEST"), goi("RESIDENT")
+def bo_ghim_ca_nhom(data, sid):
+    """Bo ghim lan sang ca nhom hoc chung. Tra ve cac sid vua tha them.
+
+    Tha mot nua thi lan Giai sau mot lop bi ghim cho cu, mot lop tu do chon - hai
+    lop "cung mot buoi" khong con o cung o gio nua."""
+    them = []
+    for sid_khac in thanh_vien(data, sid):
+        if sid_khac == sid or sid_khac not in data["sections"]:
+            continue
+        STATE["overrides"].pop(sid_khac, None)
+        STATE["bo_ghim"].add(sid_khac)
+        them.append(sid_khac)
+    return them
 
 
 def ghim_gio_da_chot(data):
@@ -114,93 +154,6 @@ def ghim_gio_da_chot(data):
         for sid, s in data["sections"].items()
         if not s.get("time_assumed") and s.get("original_slot") is not None
     }
-
-
-def chot_hoc_phan_du_gio_tu_file(data, nguon=None):
-    """Danh dau DA CHOT LICH cho moi hoc phan ma MOI lop cua no deu co gio trong
-    file. Tra ve so hoc phan vua chot.
-
-    Theo dung quyet dinh A2: *"cac lop da duoc import tu file la cac lop da chot
-    gio, tuc giao vien day da chot qua loi voi dieu phoi vien"*. Gio do von da
-    duoc ghim (ghim_gio_da_chot) - viec con thieu chi la NOI RA tren giao dien,
-    de o "Da chot n/153 mon" khong bao 0 trong khi 246/343 lop da co gio chot.
-
-    Chi chot hoc phan DU gio: mot mon con lop chua co gio thi ban chinh thuc cua
-    no chua hoan chinh, chot vao la sai nghia. `truoc` de rong tuong ung "moi lop
-    von da co gio nay" - bo chot se tra dung ve gio trong file, khong ve "de he
-    thong tu xep".
-    """
-    theo_hp = {}
-    for sid, sec in data["sections"].items():
-        theo_hp.setdefault(sec.get("course_id"), []).append(sec)
-    now = datetime.datetime.now().isoformat(timespec="seconds")
-    dem = 0
-    for cid, ds in theo_hp.items():
-        hp = data.get("courses", {}).get(cid)
-        if hp is None or hp.get("chot"):
-            continue
-        if not ds or any(x.get("time_assumed") or x.get("original_slot") is None for x in ds):
-            continue
-        hp["chot"] = {
-            "at": now, "by": "Nhập từ Excel",
-            "note": f"Giờ đã chốt sẵn trong {nguon}" if nguon else "Giờ đã chốt sẵn trong file",
-            "soLop": len(ds), "tuFile": True,
-            "truoc": {str(x["id"]): {"day": x.get("day"), "periodStart": x.get("period_start"),
-                                     "periodEnd": x.get("period_end"), "timeAssumed": False}
-                      for x in ds},
-        }
-        dem += 1
-    return dem
-
-
-def dat_lich_ban_dau(data, nguon=None):
-    """Ghim gio da chot + danh dau hoc phan du gio la DA CHOT + dat lich ban dau
-    vao STATE (dung sau khi nap file)."""
-    ghim_gio_da_chot(data)
-    chot_hoc_phan_du_gio_tu_file(data, nguon)
-    g, r = lich_ban_dau(data)
-    attach_override_metadata(data, g, "GUEST")
-    attach_override_metadata(data, r, "RESIDENT")
-    STATE["guestResult"], STATE["residentResult"] = g, r
-
-
-def attach_override_metadata(data, result, teacher_type):
-    """Gan {reason, problem, pinFailed} tu STATE['overrides'] len tren ket qua
-    giai - CHI la metadata hien thi, khong doi vi tri bat ky buoi nao. pinFailed=
-    True khi mot buoi da GHIM van roi vao unplaced (rang buoc cung nhu NoOverlap/
-    Cumulative buoc CP-SAT phai bo no du domain chi con 1 lua chon) - ghim la uu
-    tien rat manh nhung khong tuyet doi truoc rang buoc cung, dung nhu da chon o
-    dong 1."""
-    if not result:
-        return result
-    overrides = {
-        sid: ov for sid, ov in STATE["overrides"].items()
-        if data["sections"].get(sid, {}).get("teacher_type") == teacher_type
-    }
-    # LUON gan lai (ke ca rong {}) - neu overrides rong ma return som o day, key
-    # result["overrides"] cu se con SOT LAI gia tri cua lan goi truoc (vi du sau
-    # khi bo ghim buoi DUY NHAT dang co, ban { } moi khong duoc ghi de len ban cu).
-    if not overrides:
-        result["overrides"] = {}
-        return result
-
-    placed_ids = {l["id"] for l in result["lessons"]}
-    out = {}
-    for sid, ov in overrides.items():
-        out[sid] = {
-            "reason": ov.get("reason"),
-            "problem": ov.get("problem"),
-            "pinFailed": sid not in placed_ids,
-        }
-    result["overrides"] = out
-    return result
-
-
-def attach_ca_hai(data):
-    """Gan metadata ghim cho CA HAI ket qua dang cache - go tat mot buoc lap lai
-    o 5 endpoint (chot/bo chot/bo ghim/doc lai ket qua)."""
-    attach_override_metadata(data, STATE["guestResult"], "GUEST")
-    attach_override_metadata(data, STATE["residentResult"], "RESIDENT")
 
 
 def solve_guest_with_overrides(data):

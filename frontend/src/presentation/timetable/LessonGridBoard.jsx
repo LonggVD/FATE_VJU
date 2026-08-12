@@ -30,7 +30,7 @@ export default function LessonGridBoard({
   lessons = [], numDays, slotsPerDay, highlightedIds, colorBy, onPickProblem, detailed = false,
   // scrollTarget: { id, seq } - seq de bam LAI dung vu do van cuon lai duoc
   // (neu chi truyen id thi lan bam thu hai khong doi gia tri, effect khong chay).
-  onMoveLesson, onClearOverride, scrollTarget = null,
+  onMoveLesson, onClearOverride, onTachHocChung, scrollTarget = null,
 }) {
   // Keo-tha CHI mo o che do chi tiet (toan man hinh): the ~180px la muc tieu tha
   // du lon de nham chinh xac; o che do thanh mau thuong (12-20px, co ngay tram
@@ -388,6 +388,7 @@ export default function LessonGridBoard({
                       isHighlighted={highlightedIds?.has(lesson.id)}
                       onPickProblem={onPickProblem}
                       onClearOverride={onClearOverride}
+                      onTachHocChung={onTachHocChung}
                       detailed={detailed}
                       // draggable dat NGAY TREN the (khong phai div bao ngoai) vi
                       // popover (hint) la state noi bo cua LessonCard - phai dong

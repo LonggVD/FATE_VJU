@@ -33,9 +33,22 @@ def can_du_lieu(fn):
 
 
 def tra_du_lieu(data, **extra):
-    """Response chuan: toan bo bo du lieu (khuon build_data_response) + cac truong
-    rieng cua endpoint nay (savedCount, mergeReport, chotCount...)."""
-    return jsonify({**build_data_response(data, STATE.get("extra")), **extra})
+    """Response chuan: toan bo bo du lieu (khuon build_data_response) + LUOI THOI
+    KHOA BIEU dang co + cac truong rieng cua endpoint nay (savedCount,
+    mergeReport, chotCount...).
+
+    Vi sao luon gui kem guest/residentResult: moi form o "Du lieu hoc phan" deu co
+    the doi cho cua buoi tren luoi (doi Thu/Tiet, xoa gio, doi loai GV lam buoi
+    nhay giai doan, doi ten mon/GV lam the buoi ghi khac). Truoc day cac endpoint
+    do chi tra `data`, nen frontend cap nhat bang ma man Thoi khoa bieu van hien
+    ban cu cho toi khi bam Giai lai hoac F5 - hai man noi hai chuyen khac nhau ve
+    cung mot lop. Gui kem thi frontend chi viec gan lai ca hai."""
+    return jsonify({
+        **build_data_response(data, STATE.get("extra")),
+        "guestResult": STATE["guestResult"],
+        "residentResult": STATE["residentResult"],
+        **extra,
+    })
 
 
 def loi(thong_diep, ma=400, **extra):

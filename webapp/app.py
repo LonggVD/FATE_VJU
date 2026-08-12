@@ -34,12 +34,14 @@ BAN DO MA NGUON - tim loi o dau:
 from flask import Flask
 
 from api import register_blueprints
+from domain.hoan_tac import nap_moc
 from snapshot import load_snapshot
 
 app = Flask(__name__)
 register_blueprints(app)
 
 load_snapshot()  # phuc hoi du lieu nhap tay lan chay truoc (neu co) ngay khi module nap
+nap_moc()        # va diem quay ve cua nut "Huy thay doi" - xem domain/hoan_tac.py
 
 
 if __name__ == "__main__":
