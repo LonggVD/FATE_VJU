@@ -66,7 +66,11 @@ export function analyzeSubmissions(data) {
       isFreeChoice,
       isEmpty,
       state: isEmpty || isFreeChoice ? SUB_STATE.UNREPORTED : SUB_STATE.SET,
-      reason: isEmpty ? "Điều phối viên chưa nộp" : isFreeChoice ? "Đang để tự do cả tuần" : null,
+      reason: isEmpty
+        ? "Điều phối viên chưa nộp"
+        : isFreeChoice
+          ? "Chưa khai giờ rảnh — đang để tự do cả tuần"
+          : null,
     });
   }
 

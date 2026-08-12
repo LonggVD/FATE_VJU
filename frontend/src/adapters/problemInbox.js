@@ -69,8 +69,12 @@ function scanTeacherClashes(rows) {
   const byTeacher = new Map();
   for (const r of rows) {
     if (r.state !== SUB_STATE.SET) continue;
-    if (!byTeacher.has(r.teacherId)) byTeacher.set(r.teacherId, []);
-    byTeacher.get(r.teacherId).push(r);
+    // Gom theo TUNG GV cua lop (dong giang day), khong chi GV chinh - cung ly le
+    // voi scanPlacedClashes ben duoi.
+    for (const tid of r.teacherIds?.length ? r.teacherIds : [r.teacherId]) {
+      if (!byTeacher.has(tid)) byTeacher.set(tid, []);
+      byTeacher.get(tid).push(r);
+    }
   }
 
   const out = [];
@@ -114,8 +118,13 @@ function scanPlacedClashes(lessons) {
   const byTeacher = new Map();
   for (const l of lessons) {
     if (l.teacherId == null || l.slot == null) continue;
-    if (!byTeacher.has(l.teacherId)) byTeacher.set(l.teacherId, []);
-    byTeacher.get(l.teacherId).push(l);
+    // Gom theo TUNG GV cua buoi (teacherIds - dong giang day), khong chi GV
+    // chinh: mot lop 5 nguoi day thi 4 nguoi sau cung phai duoc kiem trung, y
+    // nhu solver dang lam. Fallback teacherId cho ket qua giai cu chua co field.
+    for (const tid of l.teacherIds?.length ? l.teacherIds : [l.teacherId]) {
+      if (!byTeacher.has(tid)) byTeacher.set(tid, []);
+      byTeacher.get(tid).push(l);
+    }
   }
 
   const out = [];

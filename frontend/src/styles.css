@@ -1645,6 +1645,48 @@ textarea:focus-visible {
   background: var(--xls-z-teacher);
 }
 
+/* MOT LOP CO NHIEU GIANG VIEN -> moi nguoi mot dong trong o, dung nhu file Excel
+   goc. Cac o cua khoi giang vien (hoc ham / ho ten / don vi / email / SDT) deu
+   sinh cung so dong theo cung thu tu, nen doc ngang la ra dung bo thong tin cua
+   mot nguoi. Truoc day chi hien nguoi dau danh sach nen email/SDT cua nhung
+   nguoi con lai khong doc duoc o dau tren giao dien. */
+.xls-table td.xls-gv-cell {
+  padding: 0;
+  vertical-align: top;
+}
+
+.xls-table td.xls-gv-cell .xls-gv-line {
+  display: block;
+  width: 100%;
+  padding: 2px 5px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-top: 1px dashed #cfd6e0;
+  cursor: pointer;
+}
+
+/* Dong dau khong ke: vien tren cua o da la ranh gioi. */
+.xls-table td.xls-gv-cell .xls-gv-line:first-child {
+  border-top: 0;
+}
+
+.xls-table td.xls-gv-cell .xls-gv-line:hover {
+  background: #e7dff5;
+  text-decoration: underline;
+}
+
+/* Gio da chot cua lop nam NGOAI khung gio nguoi nay da khai. He thong CO Y giu
+   nguyen gio da chot (nguyen tac "gio trong file la gio da chot"), nen day khong
+   phai loi cua thuat toan - nhung la cho VENH giua hai nguon do NGUOI nhap, phai
+   nhin ra duoc. */
+.xls-table td.xls-gv-cell .xls-gv-venh {
+  color: #b3261e;
+  text-decoration: underline dotted #b3261e;
+}
+
 /* Header dam hon than bang mot bac - de nhin hang tieu de la doc duoc ngay
    bang chia lam may vung, khong phai doi luot mat xuong du lieu. */
 .xls-table thead .xls-z-course {

@@ -379,8 +379,13 @@ def solve_guest_phase(data, time_limit_s=30):
             unused_windows = [w for w in submitted_windows if w != slot]
             lessons.append({
                 "id": sid, "teacherId": s["teacher_id"], "teacherName": teacher_display(data, s["teacher_id"]),
+                # TAT CA GV cua buoi nay (dong giang day). teacherId van la GV
+                # chinh de hien thi; cac man kiem trung/lich cua 1 GV phai doc
+                # teacherIds, khong thi buoi nay vo hinh voi nguoi thu 2 tro di
+                # du solver DA rang buoc ho (xem AddNoOverlap o tren).
+                "teacherIds": list(s.get("teacher_ids") or [s["teacher_id"]]),
                 "courseName": s.get("course_name"), "program": s["program"],
-                "programLabel": prog_label, "coordinator": coordinator,
+                "programLabel": prog_label, **prog_meta, "coordinator": coordinator,
                 "roomType": s["room_type"], "day": day, "period": period,
                 "slot": slot, "duration": s["duration"], "teacherType": "GUEST",
                 "usedWindowLabel": slot_label(slot, p["slotsPerDay"]),
@@ -401,8 +406,9 @@ def solve_guest_phase(data, time_limit_s=30):
             ]
             unplaced.append({
                 "id": sid, "teacherId": s["teacher_id"], "teacherName": teacher_display(data, s["teacher_id"]),
+                "teacherIds": list(s.get("teacher_ids") or [s["teacher_id"]]),  # dong giang day
                 "courseName": s.get("course_name"), "program": s["program"],
-                "programLabel": prog_label, "coordinator": coordinator,
+                "programLabel": prog_label, **prog_meta, "coordinator": coordinator,
                 "roomType": s["room_type"],
                 "windows": [slot_label(w, p["slotsPerDay"]) for w in submitted_windows],
                 "isForcedConflict": s["teacher_id"] in data["forced_conflict_teacher_ids"],

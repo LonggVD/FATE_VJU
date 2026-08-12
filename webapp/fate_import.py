@@ -769,10 +769,19 @@ def read_rows(source):
             "teacherName": names[0],
             # Lop chua biet ai day - van nap, giao vu gan giang vien sau trong form.
             "chuaPhanCong": chua_phan_cong,
+            # GV dong giang: TUNG NGUOI mot, kem email/SDT cua rieng ho khi tach
+            # duoc. app.py tao ban ghi GV that cho ca nhom va dua het vao
+            # section["teacher_ids"] - solver ap NoOverlap cho tat ca (xem
+            # scheduler_core.solve_*: mot interval, nhieu nguoi).
             "coTeacherNames": names[1:],
-            "teacherOrg": _text(col(row, "teacherOrg")),
-            "teacherEmail": _text(col(row, "teacherEmail")),
-            "teacherPhone": _text(col(row, "teacherPhone")),
+            "coTeacherEmails": [_phan(emails, k) for k in range(1, len(names))],
+            "coTeacherPhones": [_phan(phones, k) for k in range(1, len(names))],
+            "coTeacherOrgs": [_phan(orgs, k) for k in range(1, len(names))],
+            "teacherOrg": orgs[0] if orgs else org_cell,
+            # Tach duoc thi GV chinh lay phan dau, khong tach duoc thi giu NGUYEN
+            # ca o (khong doan bua) - dung nhu truoc day.
+            "teacherEmail": emails[0] if emails else email_cell,
+            "teacherPhone": phones[0] if phones else phone_cell,
             "teachingHoursLt": _num(col(row, "teachingHoursLt")),
             "teachingHoursTh": _num(col(row, "teachingHoursTh")),
             "location": _text(col(row, "location")),

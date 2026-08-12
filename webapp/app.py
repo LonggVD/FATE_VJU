@@ -175,6 +175,10 @@ def _build_data_response(data, extra=None):
         submissions.append({
             "sectionId": sid,
             "teacherId": s["teacher_id"],
+            # TAT CA GV cua lop (dong giang day) - cac man kiem trung phai gom theo
+            # tung nguoi, khong chi GV chinh (xem problemInbox.scanTeacherClashes,
+            # unplacedAnalysis). Thieu field nay thi nguoi thu 2 tro di vo hinh.
+            "teacherIds": list(s.get("teacher_ids") or [s["teacher_id"]]),
             "teacherName": sc.teacher_display(data, s["teacher_id"]),
             # teacherType + duration: man hinh "Khung gio da bao" phai phan biet
             # lop THINH GIANG (dieu phoi vien nop gio) voi lop CO HUU (Giai doan 2
@@ -296,9 +300,14 @@ def _detect_move_conflict(data, section_id, slot):
         if res:
             placed.extend(l for l in res["lessons"] if l["id"] != section_id)
 
+    # Trung GV xet theo CA NHOM dong giang (giao cua hai tap teacher_ids), khong
+    # chi GV chinh: solver rang buoc ca nhom nen neu chi so GV chinh o day thi
+    # keo-tha se bao "khong sao" cho dung cai cho ma thuat toan coi la trung.
+    my_tids = set(s.get("teacher_ids") or [s["teacher_id"]])
     teacher_blockers = [
         l for l in placed
-        if l["teacherId"] == s["teacher_id"] and _overlaps(slot, duration, l["slot"], l["duration"])
+        if my_tids.intersection(l.get("teacherIds") or [l["teacherId"]])
+        and _overlaps(slot, duration, l["slot"], l["duration"])
     ]
     same_room = [
         l for l in placed
@@ -643,13 +652,35 @@ def _validate_section_body(data, body, enforce_day_cap=True):
     hoac (None, None, None, None, error_message) neu khong.
     enforce_day_cap=False: xem _parse_class_time - danh cho luong nap file, KHONG
     danh cho nhap tay qua form (POST/PATCH /api/manual/section luon giu True)."""
-    try:
-        teacher_id = int(body["teacherId"])
-    except (KeyError, TypeError, ValueError):
-        return None, None, None, None, "Thiếu hoặc sai teacherId."
-    teacher = data["teachers"].get(teacher_id)
-    if teacher is None:
-        return None, None, None, None, f"Không tìm thấy giảng viên id={teacher_id}."
+    # GIANG VIEN CUA LOP: mot DANH SACH, moi nguoi vai tro NGANG NHAU.
+    #
+    # `teacherIds` la dang chinh. Van nhan `teacherId` (+ `coTeacherIds` cu) de
+    # cac ban goi cu khong vo, nhung ben trong khong con khai niem "GV chinh":
+    # teacher_ids[0] chi la nguoi dau danh sach, dung lam khoa hien thi o cac man
+    # von chi cho 1 ten (luoi TKB, tra cuu theo GV).
+    #
+    # Solver dua CUNG MOT interval vao NoOverlap cua tung nguoi trong danh sach
+    # (scheduler_core: mot lop, nhieu nguoi, khong nhan doi nhu cau phong);
+    # check_cross_program_conflicts, loai lop (_loai_lop) va gio ranh cua lop
+    # (_gio_ranh_chung) cung tinh theo ca danh sach.
+    tho = body.get("teacherIds")
+    if tho is None:
+        tho = ([body["teacherId"]] if "teacherId" in body else []) + list(body.get("coTeacherIds") or [])
+    teacher_ids = []
+    for raw in tho:
+        try:
+            tid = int(raw)
+        except (TypeError, ValueError):
+            return None, None, None, None, f"Danh sách giảng viên có giá trị sai: {raw!r}."
+        if tid not in data["teachers"]:
+            return None, None, None, None, f"Không tìm thấy giảng viên id={tid}."
+        if tid not in teacher_ids:
+            teacher_ids.append(tid)
+    if not teacher_ids:
+        return None, None, None, None, "Lớp phải có ít nhất một giảng viên."
+    teacher_id = teacher_ids[0]
+    teacher = data["teachers"][teacher_id]
+    co_teacher_ids = teacher_ids[1:]
 
     try:
         course_id = int(body["courseId"])
@@ -784,33 +815,150 @@ def _sync_teacher_sections(data, teacher_id):
     duoc dong bo lai o day) VA dang time_assumed=True (chua duoc chot gio cu
     the boi giao vu - gio da chot thi khong phu thuoc GV ranh luc nao nua).
     Khop theo teacher_ids (ca dong giang day, giong check_cross_program_conflicts
-    ben scheduler_core.py), nhung teacher_type tren section CHI cap nhat khi
-    tid la GV CHINH (s['teacher_id']) - GV chinh moi quyet dinh section thuoc
-    Giai doan 1/2, dung nhu luc tao (xem _validate_section_body)."""
-    teacher = data["teachers"][teacher_id]
-    slots_per_day = data["params"]["slotsPerDay"]
-    availability = data.get("manual_teacher_windows", {}).get(teacher_id, [])
+    ben scheduler_core.py). teacher_type va gio ranh tinh lai theo CA NHOM
+    (_loai_lop/_gio_ranh_chung) chu khong theo GV chinh: doi mot nguoi dong giang
+    tu co huu sang thinh giang thi lop phai chuyen sang Giai doan 1, va khung gio
+    cua lop phai hep lai theo nguoi vua khai."""
     for sid, s in data["sections"].items():
         if s.get("course_id") is None:
             continue
         tids = s.get("teacher_ids") or [s["teacher_id"]]
         if teacher_id not in tids:
             continue
-        if teacher_id == s["teacher_id"]:
-            s["teacher_type"] = teacher["type"]
+        s["teacher_type"] = _loai_lop(data, tids)
         if not s.get("time_assumed"):
             continue
-        if s["teacher_type"] == "RESIDENT":
-            data["submissions"][sid] = []
-            if sid in data["pending_section_ids"]:
-                data["pending_section_ids"].remove(sid)
-            continue
-        starts = _valid_starts_from_slots(availability, s["duration"], slots_per_day)
-        data["submissions"][sid] = starts
-        if starts and sid in data["pending_section_ids"]:
-            data["pending_section_ids"].remove(sid)
-        elif not starts and sid not in data["pending_section_ids"]:
-            data["pending_section_ids"].append(sid)
+        # Dung LAI _apply_section_time thay vi tinh lai o day: no la CHO DUY NHAT
+        # biet luat "da khai -> gioi han cung / chua khai -> tu do ca tuan", va
+        # luat do vua doi (khai cho co huu gio cung co tac dung). Hai ban sao thi
+        # se lech nhau ngay lan sua sau.
+        chinh = data["teachers"].get(s["teacher_id"])
+        if chinh is not None:
+            _apply_section_time(data, sid, chinh, s["duration"], None)
+
+
+def _ap_lai_loai_gv(data):
+    """Phan loai lai TOAN BO giang vien dang co theo luat hien hanh (_loai_gv) roi
+    dong bo cac lop bi anh huong. Tra ve danh sach {id, name, tu, sang}.
+
+    Dung khi vua nap/xoa danh sach co huu: du lieu da nap tu truoc phai theo luat
+    MOI ngay, khong doi nap lai file ke hoach. Doi loai GV keo theo lop doi giai
+    doan (_loai_lop) va doi MIEN GIO (thinh giang xep theo khung da khai, co huu
+    tu do) - nen phai di qua _sync_teacher_sections chu khong chi ghi lai `type`.
+    """
+    doi = []
+    for t in data["teachers"].values():
+        # Ban ghi "cho trong" van theo luat o don vi - xem cho tao no.
+        moi = _loai_gv(t.get("org"), None if t.get("placeholder") else t.get("name"))
+        if moi != t["type"]:
+            doi.append({"id": t["id"], "name": t.get("name"), "tu": t["type"], "sang": moi})
+            t["type"] = moi
+    for m in doi:
+        _sync_teacher_sections(data, m["id"])
+    # Lop KHONG nhap qua UI (nap tu Excel) khong duoc _sync_teacher_sections cham
+    # vao, nhung loai lop van phai theo nhom GV moi - neu khong, lop cua GV vua
+    # doi loai se ket lai o giai doan cu.
+    for s in data["sections"].values():
+        s["teacher_type"] = _loai_lop(data, s.get("teacher_ids") or [s["teacher_id"]])
+    data["num_resident"] = sum(1 for t in data["teachers"].values() if t["type"] == "RESIDENT")
+    data["num_guest"] = len(data["teachers"]) - data["num_resident"]
+    return doi
+
+
+def _doi_chieu_danh_sach(data, by_key):
+    """So danh sach co huu voi giang vien dang co -> bao cao cho buoc XEM TRUOC.
+
+    Ba con so quan trong, moi con so mot y nghia khac han:
+      - `khop`      : nguoi trong danh sach co day ky nay (se thanh co huu)
+      - `doiSangCoHuu` / `doiSangThinhGiang`: ai bi DOI loai neu bam nap
+      - `khongDay`  : nguoi trong danh sach nhung khong day lop nao ky nay -
+                      binh thuong (nghi/khong phan cong), chi de biet.
+    """
+    that = [t for t in (data or {}).get("teachers", {}).values() if not t.get("placeholder")]
+    co_trong_ds = {fate_lecturers.khoa_ten(t.get("name")) for t in that}
+    khop = [t for t in that if fate_lecturers.khoa_ten(t.get("name")) in by_key]
+    return {
+        "soGvDangCo": len(that),
+        "khop": len(khop),
+        "doiSangCoHuu": [
+            {"id": t["id"], "name": t.get("name"), "org": t.get("org")}
+            for t in that
+            if t["type"] != "RESIDENT" and fate_lecturers.khoa_ten(t.get("name")) in by_key
+        ],
+        "doiSangThinhGiang": [
+            {"id": t["id"], "name": t.get("name"), "org": t.get("org")}
+            for t in that
+            if t["type"] == "RESIDENT" and fate_lecturers.khoa_ten(t.get("name")) not in by_key
+        ],
+        "khongDay": sorted(v["name"] for k, v in by_key.items() if k not in co_trong_ds),
+    }
+
+
+@app.get("/api/manual/lecturers")
+def api_manual_lecturers():
+    """Danh sach GV co huu dang luu (None = chua nap -> van dung luat o don vi)."""
+    ds = STATE.get("co_huu")
+    if not ds:
+        return jsonify({"loaded": False, "rows": [], "count": 0, "fileName": None})
+    return jsonify({
+        "loaded": True, "count": ds["count"], "fileName": ds.get("fileName"),
+        "rows": sorted(ds["byKey"].values(), key=lambda m: m["name"]),
+    })
+
+
+@app.post("/api/manual/lecturers/preview")
+def api_manual_lecturers_preview():
+    """Doc file danh sach GV co huu -> BAN XEM TRUOC, CHUA ghi gi vao STATE.
+
+    Hai buoc giong luong nhap file ke hoach: nap danh sach co the DOI LOAI nhieu
+    giang vien, keo theo lop doi giai doan xep lich - phai cho xem truoc ai bi doi
+    roi moi quyet."""
+    f = request.files.get("file")
+    if f is None or not f.filename:
+        return jsonify({"error": "Chưa chọn file."}), 400
+    result, err = fate_lecturers.read_lecturers(f.stream)
+    if err:
+        return jsonify({"error": err}), 400
+    by_key = {m["key"]: m for m in result["rows"]}
+    STATE["co_huu_pending"] = {"byKey": by_key, "fileName": f.filename,
+                               "count": len(by_key), "result": result}
+    return jsonify({
+        "fileName": f.filename, "sheet": result["sheet"], "count": len(by_key),
+        "duplicates": result["duplicates"], "skipped": result["skipped"],
+        "sample": [m["name"] for m in result["rows"][:8]],
+        **_doi_chieu_danh_sach(STATE.get("data"), by_key),
+    })
+
+
+@app.post("/api/manual/lecturers/commit")
+def api_manual_lecturers_commit():
+    """Ghi danh sach vua xem truoc vao STATE va phan loai lai toan bo GV."""
+    pending = STATE.get("co_huu_pending")
+    if not pending:
+        return jsonify({"error": "Chưa có bản xem trước. Hãy tải file lên trước."}), 400
+    STATE["co_huu"] = {"byKey": pending["byKey"], "fileName": pending["fileName"],
+                       "count": pending["count"]}
+    STATE["co_huu_pending"] = None
+    doi = _ap_lai_loai_gv(STATE["data"]) if STATE["data"] else []
+    _save_snapshot()
+    return jsonify({
+        "count": STATE["co_huu"]["count"], "fileName": STATE["co_huu"]["fileName"],
+        "changed": doi,
+        **(_build_data_response(STATE["data"], STATE.get("extra")) if STATE["data"] else {}),
+    })
+
+
+@app.delete("/api/manual/lecturers")
+def api_manual_lecturers_clear():
+    """Bo danh sach co huu -> quay ve luat cu (doc o "Don vi cong tac")."""
+    STATE["co_huu"] = None
+    STATE["co_huu_pending"] = None
+    doi = _ap_lai_loai_gv(STATE["data"]) if STATE["data"] else []
+    _save_snapshot()
+    return jsonify({
+        "loaded": False, "changed": doi,
+        **(_build_data_response(STATE["data"], STATE.get("extra")) if STATE["data"] else {}),
+    })
 
 
 @app.post("/api/manual/init")
@@ -869,6 +1017,51 @@ def _build_manual_data_from_rows(rows):
     # Moi truong hop don vi ghi khac nhau deu duoc bao len o buoc xem truoc.
     teacher_ids = {}
     org_khac = {}
+    bien_the = {}
+
+    def _dang_ky_gv(name, org, title, email, phone):
+        """Tao moi HOAC dung lai ban ghi GV theo TEN da chuan hoa. Tra ve id.
+
+        Dung chung cho GV chinh va GV dong giang: nguoi dong giang o lop nay co
+        the la GV chinh o lop khac, phai ra CUNG mot ban ghi - neu khong thi mot
+        nguoi bi tach lam hai va het phat hien duoc trung lich cua chinh ho.
+
+        Khoa gop BO hoc ham/so thu tu/dau cau (fate_import.khoa_gv) - xem chu
+        thich o do; ten HIEN THI giu nguyen cach ghi trong file (uu tien ban day
+        du hon, thuong la ban co hoc ham).
+        """
+        name = " ".join(str(name or "").split())
+        key = fate_import.khoa_gv(name)
+        if key in teacher_ids:
+            t = data["teachers"][teacher_ids[key]]
+            if name and name != t["name"]:
+                bien_the.setdefault(t["id"], {t["name"]}).add(name)
+                if len(name) > len(t["name"]):
+                    t["name"] = name  # ban ghi day du hon (thuong la co hoc ham)
+            if org and org != t["org"]:
+                if t["org"]:
+                    org_khac.setdefault(t["id"], {t["org"]}).add(org)
+                else:
+                    # Ban ghi dau bo trong don vi -> lay don vi dau tien tim duoc,
+                    # va phan loai lai GUEST/RESIDENT theo no.
+                    t["org"] = org
+                    t["type"] = _loai_gv(org, t["name"])
+            # Cac truong con lai: lap day cho nao con trong.
+            for field, val in (("title", title), ("email", email), ("phone", phone)):
+                if not t[field] and val:
+                    t[field] = val
+            return teacher_ids[key]
+
+        tid = len(data["teachers"])
+        data["teachers"][tid] = {
+            "id": tid, "name": name, "type": _loai_gv(org, name), "org": org,
+            "title": title, "email": email, "phone": phone,
+        }
+        # Chua khai gio ranh - giao vu se khai sau o "Chuan bi du lieu".
+        data.setdefault("manual_teacher_windows", {})[tid] = []
+        teacher_ids[key] = tid
+        return tid
+
     for idx, r in enumerate(rows):
         org = r["teacherOrg"].strip()
 
@@ -895,46 +1088,32 @@ def _build_manual_data_from_rows(rows):
             teacher_ids[f"__chua_phan_cong_{idx}"] = tid
             continue
 
-        key = " ".join(r["teacherName"].split()).lower()
-        if key in teacher_ids:
-            t = data["teachers"][teacher_ids[key]]
-            if org and org != t["org"]:
-                if t["org"]:
-                    org_khac.setdefault(t["name"], {t["org"]}).add(org)
-                else:
-                    # Ban ghi dau bo trong don vi -> lay don vi dau tien tim duoc,
-                    # va phan loai lai GUEST/RESIDENT theo no.
-                    t["org"] = org
-                    low = org.lower()
-                    t["type"] = "RESIDENT" if ("việt nhật" in low or "viet nhat" in low) else "GUEST"
-            # Cac truong con lai: lap day cho nao con trong.
-            for field, val in (("title", r["teacherTitle"]), ("email", r["teacherEmail"]),
-                               ("phone", r["teacherPhone"])):
-                if not t[field] and val:
-                    t[field] = val
-            continue
+        _dang_ky_gv(r["teacherName"], org, r["teacherTitle"], r["teacherEmail"], r["teacherPhone"])
 
-        low = org.lower()
-        tid = len(data["teachers"])
-        data["teachers"][tid] = {
-            "id": tid,
-            "name": r["teacherName"],
-            # Cung luat phan loai voi load_real_fate_data: don vi cong tac co
-            # "Viet Nhat" -> co huu (Giai doan 2), con lai -> thinh giang (GD1).
-            "type": "RESIDENT" if ("việt nhật" in low or "viet nhat" in low) else "GUEST",
-            "org": org,
-            "title": r["teacherTitle"],
-            "email": r["teacherEmail"],
-            "phone": r["teacherPhone"],
-        }
-        # Chua khai gio ranh - giao vu se khai sau o "Chuan bi du lieu".
-        data.setdefault("manual_teacher_windows", {})[tid] = []
-        teacher_ids[key] = tid
+        # GV DONG GIANG (o ten ghi nhieu nguoi): moi nguoi mot ban ghi RIENG, de
+        # ho cung bi rang buoc lich o lop nay - xem chu thich o
+        # _validate_section_body. Truoc day chi lay nguoi dau, nen nguoi thu 2+
+        # bien mat khoi lop: ai cung day mot lop khac dung gio nay thi he thong
+        # KHONG bao trung, va nguoi khong day lop nao khac thi khong ton tai.
+        #
+        # Hoc ham chi gan cho nguoi DAU: o "Học hàm, học vị" cua file ghi mot gia
+        # tri cho ca o ten (vd "TS." cho 5 nguoi) nen khong the biet chac cua ai.
+        for j, ten_dg in enumerate(r.get("coTeacherNames") or []):
+            # Don vi RIENG cua tung nguoi khi o do tach duoc (fate_import tach
+            # theo vi tri nhu email/SDT); khong tach duoc thi dung chung o.
+            _dang_ky_gv(ten_dg, _phan_tu(r.get("coTeacherOrgs"), j) or org, "",
+                        _phan_tu(r.get("coTeacherEmails"), j),
+                        _phan_tu(r.get("coTeacherPhones"), j))
 
-    for ten, orgs in org_khac.items():
+    for tid, orgs in org_khac.items():
         canh_bao.append({
             "row": None, "kind": "gop_giang_vien",
-            "detail": f"{ten} — {' · '.join(sorted(orgs))}",
+            "detail": f"{data['teachers'][tid]['name']} — {' · '.join(sorted(orgs))}",
+        })
+    for tid, tens in bien_the.items():
+        canh_bao.append({
+            "row": None, "kind": "gop_bien_the_ten",
+            "detail": " · ".join(sorted(tens)),
         })
 
     # --- Hoc phan: gop theo (ma, ten) ---
@@ -953,9 +1132,15 @@ def _build_manual_data_from_rows(rows):
     # --- Lop ---
     for idx, r in enumerate(rows):
         tkey = (f"__chua_phan_cong_{idx}" if r.get("chuaPhanCong")
-                else " ".join(r["teacherName"].split()).lower())
+                else fate_import.khoa_gv(r["teacherName"]))
         body = {
-            "teacherId": teacher_ids[tkey],
+            # Ca nhom trong MOT danh sach, vai tro ngang nhau (nguoi dau la nguoi
+            # ghi dau tien trong o ten cua file).
+            "teacherIds": [teacher_ids[tkey]] + [
+                teacher_ids[fate_import.khoa_gv(n)]
+                for n in (r.get("coTeacherNames") or [])
+                if fate_import.khoa_gv(n) in teacher_ids
+            ],
             "courseId": course_ids[(r["courseCode"].strip().lower(), r["courseName"].strip().lower())],
             "duration": r["duration"] or data["params"]["duration"],
             "classCode": r["classCode"], "program": r["program"],

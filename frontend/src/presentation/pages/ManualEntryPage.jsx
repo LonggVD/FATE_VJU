@@ -377,11 +377,37 @@ export default function ManualEntryPage({ role }) {
                     <td>{c.periodEnd ?? "—"}</td>
                     <td className="xls-ref">{c.prevTeacherName || "—"}</td>
                     <td className="xls-ref">{c.prevTeacherOrg || "—"}</td>
-                    <td className="xls-z-teacher" onClick={openTeacher(c.teacherId)}>{c.teacherTitle || "—"}</td>
-                    <td className="xls-z-teacher" onClick={openTeacher(c.teacherId)}>{c.teacherNameRaw || c.teacherName}</td>
-                    <td className="xls-z-teacher" onClick={openTeacher(c.teacherId)}>{c.teacherOrg || "—"}</td>
-                    <td className="xls-z-teacher" onClick={openTeacher(c.teacherId)}>{c.teacherEmail || "—"}</td>
-                    <td className="xls-z-teacher" onClick={openTeacher(c.teacherId)}>{c.teacherPhone || "—"}</td>
+                    {/* MOI GIANG VIEN MOT DONG trong o - dung nhu file Excel goc
+                        ghi ca nhom trong mot o. Truoc day chi hien nguoi dau nen
+                        email/SDT cua nhung nguoi con lai khong doc duoc o dau, va
+                        khong bam vao ho de khai gio duoc. Bam vao TUNG dong -> mo
+                        ngan sua CHINH nguoi do (co muc "Gio co the day"). */}
+                    {["title", "name", "org", "email", "phone"].map((truong) => (
+                      <td key={truong} className="xls-z-teacher xls-gv-cell">
+                        {(c.teachers?.length ? c.teachers : [null]).map((t, k) => (
+                          <button
+                            type="button"
+                            key={t ? t.id : k}
+                            // Gio da chot cua lop nam NGOAI khung nguoi do da khai:
+                            // he thong CO Y khong doi gio da chot, nhung phai thay
+                            // duoc cho venh nay chu khong de giao vu tu doan.
+                            className={
+                              "xls-gv-line" + (t?.outsideDeclared ? " xls-gv-venh" : "")
+                            }
+                            title={
+                              t
+                                ? t.outsideDeclared
+                                  ? `${t.name} — giờ đã chốt của lớp này NGOÀI khung giờ ${t.name} đã khai. Hệ thống giữ nguyên giờ đã chốt; sửa giờ lớp hoặc khung giờ đã khai nếu cần.`
+                                  : `${t.name} — bấm để sửa / khai giờ có thể dạy`
+                                : undefined
+                            }
+                            onClick={t ? openTeacher(t.id) : undefined}
+                          >
+                            {(truong === "name" ? t?.name : t?.[truong]) || "—"}
+                          </button>
+                        ))}
+                      </td>
+                    ))}
                     <td>{c.teachingHoursLt ?? "—"}</td>
                     <td>{c.teachingHoursTh ?? "—"}</td>
                     <td>{c.location || "—"}</td>
@@ -431,6 +457,9 @@ export default function ManualEntryPage({ role }) {
           section={selectedSection}
           onClose={() => setDrawer(null)}
           onDuplicated={(newId) => setDrawer({ type: "section", id: newId })}
+          // Bam "Giờ dạy" canh mot giang vien trong lop -> chuyen sang ngan cua
+          // chinh nguoi do (co muc khai gio co the day).
+          onOpenTeacher={(id) => setDrawer({ type: "teacher", id })}
         />
       )}
       {drawer?.type === "teacher" && (
