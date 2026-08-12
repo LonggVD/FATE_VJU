@@ -6,9 +6,10 @@ from flask import Blueprint, jsonify, request
 from api.common import can_du_lieu, loi, tra_du_lieu
 from domain.chot import khoa_vi_da_chot
 from domain.hoc_chung import thanh_vien
-from domain.pinning import (attach_ca_hai, attach_override_metadata,
-                            detect_move_conflict, dong_bo_ket_qua)
+from domain.luoi import attach_ca_hai, attach_override_metadata, dong_bo_ket_qua
+from domain.pinning import bo_ghim_ca_nhom, detect_move_conflict
 from domain.time_rules import apply_section_time, overlaps
+from domain.hoan_tac import dat_moc, hoan_tac
 from snapshot import save_snapshot
 from state import DAY_LABELS_VN, STATE
 
@@ -124,10 +125,13 @@ def api_clear_override(data):
     # Ghi vao STATE['bo_ghim'] de ca hai duong ghim cung tha lop nay ra.
     if section_id in data["sections"]:
         STATE["bo_ghim"].add(section_id)
+    # HOC CHUNG: tha mot nua thi lan Giai sau mot lop bi ghim cho cu, mot lop tu do
+    # chon - hai lop "cung mot buoi" khong con o cung o gio.
+    cung_nhom = bo_ghim_ca_nhom(data, section_id)
 
     attach_ca_hai(data)
     return jsonify({
-        "sectionId": section_id, "cleared": True,
+        "sectionId": section_id, "cleared": True, "hocChungAlso": cung_nhom,
         "guestResult": STATE["guestResult"], "residentResult": STATE["residentResult"],
     })
 
@@ -210,5 +214,23 @@ def api_save_schedule(data):
     # vi tri dang hien vua duoc sao sang sections).
     dong_bo_ket_qua(data)
     save_snapshot()
+    # Moi lan luu la mot "ban da chot" - ghi moc de nut "Huy thay doi" quay ve
+    # duoc dung day (xem domain/hoan_tac.py: dat_moc).
+    dat_moc("lần lưu thời khoá biểu")
     return tra_du_lieu(data, savedCount=saved_count, problemCount=problem_count,
                        missingCount=missing_count)
+
+
+@bp.post("/api/manual/hoan-tac")
+@can_du_lieu
+def api_hoan_tac(data):
+    """"Huy thay doi": tra toan bo ve dung trang thai cua lan LUU gan nhat (hoac
+    luc vua nap file, neu chua luu lan nao).
+
+    Khac han "Bo ghim" (mot buoi) va nut "Huy" o banner keo-tha (mot buoi CHUA
+    luu): cai nay quay lai CA MAN - gio cua moi lop, ghim, trang thai chot, nhom
+    hoc chung va ca luoi dang hien."""
+    tt, err = hoan_tac()
+    if err:
+        return loi(err)
+    return tra_du_lieu(STATE["data"], hoanTacVe=tt)

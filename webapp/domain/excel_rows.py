@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-"""DUNG BO DU LIEU tu cac dong Excel da chuan hoa (fate_import) + gom bao cao
-xem truoc.
+"""DUNG BO DU LIEU tu cac dong Excel da chuan hoa (fate_import).
 
 Nguyen tac cua module nay: KHONG tu ghep dict bang tay. Chay lai dung nhung ham
 ma duong nhap tay dung (sections.validate_section_body -> programs.
@@ -10,112 +9,17 @@ pending_section_ids, room_type... deu do cung mot doan code sinh ra. Neu sau nay
 sua luat o do thi ca hai duong deu doi theo.
 """
 
-import fate_audit
 import fate_import
 import scheduler_core as sc
+from domain.excel_trung import bo_dong_nhap_trung
 from domain.merge import noi_slots_per_day
-from domain.programs import canonical_program_name
 from domain.sections import empty_manual_data, id_moi, validate_section_body
 from domain.teachers import dem_lai_so_gv, loai_gv, phan_tu
 from domain.time_rules import apply_section_time
 from state import DAY_LABELS_VN
 
-
-def _so_sv(r):
-    """So SV du kien de so sanh; -1 khi o do bo trong (de trong LUON thua mot con
-    so that, du con so do la 0)."""
-    v = r.get("expectedStudents")
-    return v if isinstance(v, (int, float)) else -1
-
-
-def _khoa_trung(r):
-    """Khoa nhan dien MOT LOP-MOT BUOI de biet hai dong co phai nhap trung.
-
-    Gom du BON thanh phan, thieu mot cai la gop nham du lieu that:
-      - MA LOP      : ten dinh danh lop. Khong co thi khong the noi gi (xem duoi).
-      - GIANG VIEN  : chuan hoa qua fate_import.khoa_gv (bo hoc ham/dau cau) - cung
-                      mot nguoi hay duoc ghi 'PGS.TS. Bui Nguyen Quoc Trinh' o dong
-                      nay va 'Bui Nguyen Quoc Trinh' o dong kia. Thieu GV thi cac
-                      dong DONG GIANG (mot lop nhieu GV, moi nguoi mot dong) bi gop
-                      lam mot -> mat GV thu 2 tro di.
-      - GIO         : Thu + tiet dau + tiet cuoi. Thieu gio thi cac buoi KHAC NHAU
-                      trong tuan cua cung mot lop bi gop lam mot -> mat buoi day.
-      - CTDT        : chuan hoa thu tu ghep (canonical_program_name) de
-                      'ESCT+BICA' va 'BICA+ESCT' ra cung mot khoa. Thieu CTDT thi
-                      cac dong HOC GHEP (nhieu CTDT hoc chung mot buoi, moi CTDT
-                      mot dong voi si so rieng) bi gop lam mot -> mat si so: dong
-                      HIS1001 co 5 CTDT tong 244 SV se chi con 91.
-    """
-    return (
-        (r["classCode"] or "").strip().lower(),
-        fate_import.khoa_gv(r["teacherName"] or ""),
-        r["day"], r["periodStart"], r["periodEnd"],
-        canonical_program_name((r["program"] or "").strip()).lower(),
-    )
-
-
-def bo_dong_nhap_trung(rows):
-    """Bo cac DONG NHAP TRUNG, moi nhom chi giu dong co SO SV DU KIEN lon nhat.
-
-    Vi sao lay dong SV lon nhat chu khong cong don: hai dong trung nhau la CUNG
-    MOT lop duoc hai nguoi nhap hai lan (vd khoa nhap va CTDT nhap lai), moi nguoi
-    ghi mot con so uoc luong - vd SAS3039 co dong ghi 17 SV, dong ghi 20 SV cho
-    dung mot lop ESAS. Cong don thanh 37 la dem sinh vien hai lan. Con cac dong
-    HOC GHEP (nhieu CTDT that su hoc chung) KHONG bi coi la trung ca - CTDT nam
-    trong khoa gom, xem _khoa_trung().
-
-    Dong KHONG CO MA LOP duoc giu nguyen het: khong co gi dinh danh lop thi khong
-    the ket luan hai dong la mot. Trong file that co 10 dong bo trong ma lop, bo
-    trong ca gio, thuoc 10 CTDT khac nhau - gop theo cac truong con lai se lam
-    rung 9 lop that.
-
-    Tra ve (rows_giu, canh_bao) - canh_bao dung khuon {row, kind, detail} de vao
-    thang bang "Nen ra lai" o buoc xem truoc.
-    """
-    nhom = {}
-    thu_tu = []
-    giu_nguyen = []
-    for r in rows:
-        if not (r["classCode"] or "").strip():
-            giu_nguyen.append(r)
-            continue
-        k = _khoa_trung(r)
-        if k not in nhom:
-            nhom[k] = []
-            thu_tu.append(k)
-        nhom[k].append(r)
-
-    ra, canh_bao = [], []
-    for k in thu_tu:
-        ds = nhom[k]
-        if len(ds) == 1:
-            ra.append(ds[0])
-            continue
-        # max() tra ve phan tu DAU trong cac phan tu bang nhau -> trung si so thi
-        # giu dong xuat hien truoc trong file, on dinh giua cac lan nap.
-        giu = max(ds, key=_so_sv)
-        ra.append(giu)
-        bo = [x for x in ds if x is not giu]
-        canh_bao.append({
-            "row": giu["excelRow"], "kind": "dong_nhap_trung",
-            "detail": (
-                f"“{k[0]}” · {k[5] or 'không CTĐT'} · "
-                + (f"thứ {k[2] + 2}, tiết {k[3]}-{k[4]}" if k[2] is not None else "chưa có giờ")
-                + f" — {len(ds)} dòng "
-                + " · ".join(
-                    f"dòng {x['excelRow']}: {'—' if _so_sv(x) < 0 else int(_so_sv(x))} SV"
-                    + (" (GIỮ)" if x is giu else "")
-                    for x in ds
-                )
-            ),
-        })
-
-    # Tra lai dung THU TU trong file (theo dong Excel) - buoc xem truoc va cac bang
-    # ben duoi doc theo thu tu nay.
-    ra.extend(giu_nguyen)
-    ra.sort(key=lambda r: (r["excelRow"], r["day"] if r["day"] is not None else -1,
-                           r["periodStart"] or 0))
-    return ra, canh_bao
+# Bo dong nhap trung nam o domain/excel_trung.py; bao cao xem truoc o
+# domain/excel_preview.py - xem docstring cua tung file.
 
 
 def build_manual_data_from_rows(rows):
@@ -345,101 +249,3 @@ def build_manual_data_from_rows(rows):
     data["num_availability_assumed"] = sum(
         1 for s in data["sections"].values() if s.get("availability_assumed"))
     return data, loi, canh_bao
-
-
-# Nhan doc duoc cho tung LOAI dong bi bo / dong can luu y. Gom theo loai roi moi
-# hien - ban dau tra ve danh sach phang rồi cat 20 dong dau, ra man hinh thanh 20
-# dong lap y het nhau va mot dong "…va 12 dong nua cung loai" khong ai hieu la
-# loai gi. Nguoi dung can biet QUY TAC nao lam dong bi bo, kem so luong - khong
-# phai doc tung dong mot.
-NHAN_BO_QUA = {
-    "don_vi_dieu_phoi": "Ô giảng viên ghi tên một ĐƠN VỊ điều phối, không phải một người cụ thể",
-    "thieu_ten_hoc_phan": "Không xác định được Tên học phần cho dòng đó",
-    "o_gv_rong": "Ô giảng viên rỗng sau khi tách tên",
-}
-NHAN_LUU_Y = {
-    "chua_phan_cong": "Lớp CHƯA phân công giảng viên — vẫn nạp đủ, ô giảng viên giữ nguyên "
-                      "như trong file (hoặc để trống) để gán sau",
-    "thieu_ten_hoc_phan": "Dòng không có Tên học phần ở bất kỳ dòng nào phía trên — "
-                          "đặt tạm tên theo mã lớp, sửa lại trong form",
-    "dong_giang": "Ô ghi nhiều giảng viên đồng giảng — TẤT CẢ đều được ràng buộc lịch cho "
-                  "lớp này (người đầu là GV chính để hiển thị); email/SĐT chia theo vị trí "
-                  "khi số lượng khớp số người, học hàm chỉ gán cho người đầu",
-    "nhieu_buoi": "Dòng ghi nhiều buổi trong tuần — tách thành nhiều lớp cùng mã lớp",
-    "gop_giang_vien": "Cùng một họ tên nhưng ghi nhiều đơn vị công tác khác nhau — "
-                      "đã gộp làm một người và lấy đơn vị ghi đầu tiên",
-    "gop_bien_the_ten": "Cùng một người nhưng file ghi tên nhiều kiểu (có/không học hàm, "
-                        "khác dấu cách, có số thứ tự) — đã gộp làm một người; nên rà lại "
-                        "để chắc không phải hai người khác nhau",
-    "dong_nhap_trung": "NHẬP TRÙNG: nhiều dòng cùng mã lớp + cùng giảng viên + cùng giờ + "
-                       "cùng CTĐT — đã giữ dòng có Số SV dự kiến LỚN NHẤT và bỏ các dòng "
-                       "còn lại (hai dòng trùng là một lớp được nhập hai lần, cộng dồn sĩ "
-                       "số sẽ đếm sinh viên hai lần). Các lớp HỌC GHÉP — nhiều CTĐT học "
-                       "chung một buổi — KHÔNG bị gộp, vẫn giữ đủ từng dòng",
-    "ngay_ngoai_quy_dinh_giu_nguyen": "Dạy Thứ 7/Chủ nhật, ngoài quy định (thỉnh giảng tới "
-                                      "Thứ 7, cơ hữu tới Thứ 6) — GIỮ NGUYÊN vì là giờ đã "
-                                      "chốt trong file, hệ thống không tự đổi",
-    "gio_ngoai_pham_vi_tiet": "Tiết trong file quá lớn, không thể là giờ học thật — đã bỏ giờ, "
-                              "chuyển \"để hệ thống tự xếp\" (lớp vẫn được nạp đủ)",
-    "noi_so_tiet": "File có giờ vượt số tiết/ngày mặc định — đã nới số tiết/ngày cho cả thời "
-                   "khoá biểu để giữ đúng giờ trong file",
-}
-
-
-def gom_theo_loai(items, nhan_map):
-    """Gom danh sach {row, kind, detail} theo `kind`. Moi nhom kem so luong, danh
-    sach so dong Excel, va cac gia tri `detail` khac nhau da gap (co dem)."""
-    nhom = {}
-    for x in items:
-        kind = x.get("kind", "khac")
-        g = nhom.setdefault(kind, {"loai": kind, "nhan": nhan_map.get(kind, kind),
-                                   "so": 0, "dong": [], "_ct": {}})
-        g["so"] += 1
-        if x.get("row") is not None:
-            g["dong"].append(x["row"])
-        d = (x.get("detail") or "").strip()
-        if d:
-            g["_ct"][d] = g["_ct"].get(d, 0) + 1
-    out = []
-    for g in nhom.values():
-        g["chiTiet"] = [{"text": t, "so": n}
-                        for t, n in sorted(g.pop("_ct").items(), key=lambda kv: -kv[1])]
-        out.append(g)
-    return sorted(out, key=lambda g: -g["so"])
-
-
-def build_import_preview_response(result, data, loi, canh_bao_gv, file_name):
-    """Gop ket qua doc file thanh BAN XEM TRUOC cho UI."""
-    summary = fate_import.summarize(result)
-    summary["soLopDungDuoc"] = len(data["sections"])
-    summary["soGiangVien"] = len(data["teachers"])
-    summary["soHocPhan"] = len(data["courses"])
-
-    all_warnings = result["warnings"]
-    summary["soCanhBao"] = len(all_warnings) + len(canh_bao_gv)
-    data_issues = fate_audit.kiem_tra(result["rows"], data["teachers"])
-
-    return {
-        "fileName": file_name,
-        "summary": summary,
-        # Gom theo LOAI, khong cat top-20: so nhom it (2-3) nen gui het duoc, ma
-        # nguoi dung doc mot cai la biet ngay co bao nhieu kieu dong bi bo va moi
-        # kieu bao nhieu dong.
-        "skippedGroups": gom_theo_loai(result["skipped"], NHAN_BO_QUA),
-        "warningGroups": gom_theo_loai(all_warnings + canh_bao_gv, NHAN_LUU_Y),
-        # LOI TRONG CHINH FILE (khac warningGroups - xem fate_audit): ma lop dung
-        # cho 2 hoc phan, ten khac dau thanh 2 hoc phan, mot email 2 nguoi, dong
-        # nhap trung... Import khong sai o dau ca, nhung du lieu ra khong dung y.
-        "dataIssues": data_issues,
-        "dataIssuesSummary": fate_audit.tom_tat(data_issues),
-        "errors": loi[:20],
-        "sampleRows": [
-            {
-                "excelRow": r["excelRow"], "courseCode": r["courseCode"],
-                "courseName": r["courseName"], "classCode": r["classCode"],
-                "program": r["program"], "teacherName": r["teacherName"],
-                "day": r["day"], "periodStart": r["periodStart"], "periodEnd": r["periodEnd"],
-            }
-            for r in result["rows"][:8]
-        ],
-    }

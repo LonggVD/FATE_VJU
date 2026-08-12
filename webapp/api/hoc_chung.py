@@ -11,7 +11,7 @@ from flask import Blueprint, jsonify, request
 from api.common import can_du_lieu, loi, tra_du_lieu
 from domain.chot import khoa_vi_da_chot
 from domain.hoc_chung import cac_nhom, gio_dai_dien, kiem_tra_nhom, tao_nhom, xoa_nhom
-from domain.pinning import dong_bo_ket_qua
+from domain.luoi import dong_bo_ket_qua
 from snapshot import save_snapshot
 
 bp = Blueprint("hoc_chung", __name__)

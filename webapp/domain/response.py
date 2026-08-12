@@ -8,6 +8,7 @@ lai gio hien tai tu overrides thi ghi ro "chi hien thi, khong ghi lai vao s".
 """
 
 import scheduler_core as sc
+from domain.chot import khoa_vi_da_chot
 from domain.hoc_chung import nhom_cua
 from domain.programs import KHOA_SPLIT_RE, tach_phan
 from domain.teachers import co_huu_theo_danh_sach
@@ -150,6 +151,13 @@ def build_classes_list(data):
             # qua bao "trung giang vien" va de gop the tren luoi.
             "hocChungId": (nhom_cua(data, sid) or {}).get("id"),
             "hocChungWith": [x for x in cung_buoi.get(sid, []) if x != sid],
+            # Lop nay KHONG thuoc mon da chot, nhung HOC CHUNG voi mot lop thuoc
+            # mon da chot -> gio bi khoa (xem chot.khoa_vi_da_chot). Gui ly do ra
+            # de bang khoa san o Thu/Tiet va noi vi sao; khong co co nay thi giao
+            # vu thay "chua chot", sua roi moi an 409 va khong hieu tai sao.
+            "hocChungLockedBy": (khoa_vi_da_chot(data, sid)
+                                 if (cung_buoi.get(sid) and not (course.get("chot")))
+                                 else None),
             "status": _section_status(data, s),
             # Trang thai lich sau khi "Luu thoi khoa bieu" - None khi chua bam
             # luu lan nao (khac "status" o tren, von chi noi ve gio gia dinh/co
@@ -158,6 +166,14 @@ def build_classes_list(data):
         })
     out.sort(key=lambda x: x["sectionId"])
     return out
+
+
+def _thong_tin_moc():
+    """Mo ta moc hoan tac. Import TRONG HAM co chu y: domain/hoan_tac.py import
+    snapshot.py, ma snapshot import domain/pinning.py - import o dau file se thanh
+    vong tron (response -> hoan_tac -> snapshot -> luoi -> ...)."""
+    from domain.hoan_tac import thong_tin_moc
+    return thong_tin_moc()
 
 
 def build_data_response(data, extra=None):
@@ -327,6 +343,8 @@ def build_data_response(data, extra=None):
         # goc phai di rieng o day - khong thi giao vu khong con biet dang lam
         # tren file nao.
         "importedFrom": (extra or {}).get("importedFrom"),
+        # Moc de nut "Huy thay doi" biet no se tra ve dau (None = chua co moc).
+        "hoanTac": _thong_tin_moc(),
         "courses": sorted(data.get("courses", {}).values(), key=lambda c: c["id"]),
         # Cac nhom HOC CHUNG dang co - frontend can ca danh sach de ve the gop va
         # de biet cap nao khong phai "trung giang vien".

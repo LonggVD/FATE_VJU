@@ -10,7 +10,7 @@ from flask import Blueprint, jsonify, request
 
 from api.common import can_du_lieu, loi, tra_du_lieu
 from domain.chot import bo_chot_hoc_phan, chot_hoc_phan, lop_cua_hoc_phan
-from domain.pinning import dong_bo_ket_qua
+from domain.luoi import dong_bo_ket_qua
 from snapshot import save_snapshot
 
 bp = Blueprint("chot", __name__)

@@ -9,8 +9,8 @@ tam_bo_ghim(...)` de nhung lop giao vu vua bam "Bo ghim" that su duoc xep lai.
 from flask import Blueprint, jsonify, request
 
 from api.common import can_du_lieu, loi
-from domain.pinning import (attach_ca_hai, attach_override_metadata,
-                            ghim_tay_o_giai_doan_2, solve_guest_with_overrides,
+from domain.luoi import attach_ca_hai, attach_override_metadata
+from domain.pinning import (ghim_tay_o_giai_doan_2, solve_guest_with_overrides,
                             tam_bo_ghim)
 from state import STATE
 

@@ -9,11 +9,13 @@ lan hai va khong co nguy co lan 2 ra ket qua khac lan 1.
 from flask import Blueprint, jsonify, request, send_file
 
 from api.common import loi
-from domain.excel_rows import build_import_preview_response, build_manual_data_from_rows
+from domain.excel_preview import build_import_preview_response
+from domain.excel_rows import build_manual_data_from_rows
 from domain.hoc_chung import luu_de_tai_lap, tai_lap_theo_ma_lop
 from domain.merge import gop_manual_data
-from domain.pinning import dat_lich_ban_dau
+from domain.luoi import dat_lich_ban_dau
 from domain.response import build_data_response
+from domain.hoan_tac import dat_moc
 from snapshot import save_snapshot
 from state import STATE
 
@@ -131,6 +133,8 @@ def api_manual_import_commit():
     dat_lich_ban_dau(STATE["data"], nguon)
 
     save_snapshot()
+    # Moc dau tien: "luc vua nap file". Chua luu lan nao thi day la diem quay ve.
+    dat_moc(f"lúc vừa nạp {pending['fileName']}")
     resp = build_data_response(STATE["data"], STATE["extra"])
     if nhom_cu:
         # Noi ro da ghep lai duoc bao nhieu nhom va mat nhung nhom nao - khong thi
