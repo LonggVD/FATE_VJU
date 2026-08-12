@@ -1,52 +1,23 @@
 # -*- coding: utf-8 -*-
-"""Loi logic sinh du lieu + giai CP-SAT, tach rieng khoi Flask de de test/tai su dung."""
+"""MO HINH CP-SAT (hai giai doan) + cac ham doc thuoc tinh cua mot lop.
+
+Tach rieng khoi Flask de de test/tai su dung: khong import gi tu webapp ca, chi
+nhan vao/tra ve bo du lieu `data` (xem domain/sections.py: empty_manual_data).
+
+Hai giai doan:
+    solve_guest_phase()     xep lop THINH GIANG trong khung gio ho da bao
+    solve_resident_phase()  ghep lop CO HUU vao cho con lai, giu nguyen GD1
+
+check_cross_program_conflicts() la buoc "giao vu khoa check trung" chay TRUOC khi
+giai: xet rieng tung giang vien xem cac khung gio hai dieu phoi vien bao cho ho
+co the cung ton tai duoc khong.
+"""
 
 import itertools
-import json
-import os
-import random
-import re
 import time
 from ortools.sat.python import cp_model
 
 DAY_NAMES = ["Thu 2", "Thu 3", "Thu 4", "Thu 5", "Thu 6", "Thu 7", "Chu nhat"]
-
-_DAY_RE = re.compile(r"th(?:ứ|u)\s*(\d)", re.IGNORECASE)
-_SUNDAY_RE = re.compile(r"ch(?:ủ|u)\s*nh(?:ậ|a)t", re.IGNORECASE)
-_PERIOD_RE = re.compile(r"ti(?:ế|e)t\s*(\d+)\s*-\s*(\d+)", re.IGNORECASE)
-_PLACEHOLDER_TEACHERS = {"phòng đào tạo điều phối", "jle điều phối", "phòng đào tạo"}
-
-_REAL_DATA_PATH = os.path.join(os.path.dirname(__file__), "real_data.json")
-try:
-    with open(_REAL_DATA_PATH, encoding="utf-8") as _f:
-        REAL_DATA = json.load(_f)
-except FileNotFoundError:
-    REAL_DATA = {"faculties": [], "teacherNames": [], "courseNames": [], "roomNames": []}
-
-
-def _cycled_names(pool, n, fallback_prefix):
-    """Lay n ten tu pool (khong shuffle, giu thu tu on dinh) - lap lai + danh so
-    neu n > len(pool). Neu pool rong, dung fallback 'Prefix A/B/C...'."""
-    if not pool:
-        return [f"{fallback_prefix} {chr(65 + i)}" for i in range(n)]
-    names = []
-    i = 0
-    while len(names) < n:
-        base = pool[i % len(pool)]
-        cycle = i // len(pool)
-        names.append(base if cycle == 0 else f"{base} ({cycle + 1})")
-        i += 1
-    return names
-
-
-def _sampled_names(pool, n):
-    """Lay n ten NGAU NHIEN (khong trung neu du pool, cho phep trung o phan du)."""
-    if not pool:
-        return [None] * n
-    names = random.sample(pool, k=min(n, len(pool)))
-    if n > len(names):
-        names += random.choices(pool, k=n - len(names))
-    return names
 
 
 def slot_label(s, slots_per_day):
@@ -140,123 +111,6 @@ def teacher_display(data, teacher_id):
     return f"{name} (GV#{teacher_id})" if name else f"GV {teacher_id}"
 
 
-def generate_data(params):
-    """params: dict voi cac khoa - xem DEFAULT_PARAMS trong app.py"""
-    random.seed(params["seed"])
-
-    num_programs = params["numFaculties"] * params["programsPerFaculty"]
-    num_resident = int(params["numTeachers"] * params["pctResident"] / 100)
-    num_guest = params["numTeachers"] - num_resident
-
-    programs = list(range(num_programs))
-
-    # --- Khoa & Chuong trinh & Dieu phoi vien (ten Khoa lay tu du lieu that neu co) ---
-    faculty_names = _cycled_names(REAL_DATA["faculties"], params["numFaculties"], "Khoa")
-    program_faculty = {p: p // params["programsPerFaculty"] for p in programs}
-    coordinator_names = {p: f"DPV-CT{p} ({faculty_names[program_faculty[p]]})" for p in programs}
-
-    # --- Ten GV that (neu co du lieu that) ---
-    teacher_real_names = _sampled_names(REAL_DATA["teacherNames"], params["numTeachers"])
-
-    teachers = []
-    for i in range(params["numTeachers"]):
-        is_guest = i >= num_resident
-        teachers.append({
-            "id": i,
-            "name": teacher_real_names[i],
-            "type": "GUEST" if is_guest else "RESIDENT",
-            "home_program": random.choice(programs),
-        })
-
-    multi_program_guests = []
-    for t in teachers:
-        if t["type"] == "GUEST" and random.random() < 0.15:
-            other = random.choice([p for p in programs if p != t["home_program"]])
-            t["second_program"] = other
-            multi_program_guests.append(t["id"])
-
-    section_course_names = (
-        random.choices(REAL_DATA["courseNames"], k=params["numSections"])
-        if REAL_DATA["courseNames"] else [None] * params["numSections"]
-    )
-
-    sections = []
-    for i in range(params["numSections"]):
-        program = random.choice(programs)
-        use_guest = random.random() < params["pctSectionsGuest"] / 100
-        if use_guest:
-            candidates = [t for t in teachers if t["type"] == "GUEST" and
-                          (t["home_program"] == program or t.get("second_program") == program)]
-            if not candidates:
-                candidates = [t for t in teachers if t["type"] == "GUEST"]
-            teacher = random.choice(candidates)
-        else:
-            candidates = [t for t in teachers if t["type"] == "RESIDENT" and
-                          t["home_program"] == program]
-            if not candidates:
-                candidates = [t for t in teachers if t["type"] == "RESIDENT"]
-            teacher = random.choice(candidates)
-
-        room_type = "LAB" if random.random() < 0.25 else "LT"
-        sections.append({
-            "id": i,
-            "program": program,
-            "course_name": section_course_names[i],
-            "teacher_id": teacher["id"],
-            "teacher_type": teacher["type"],
-            "room_type": room_type,
-            "duration": params["duration"],
-        })
-
-    # Chi dung cho submissions cua GUEST (RESIDENT khong qua submissions - xem
-    # ben duoi) - gioi han toi Thu 7 theo dung quy tac o valid_starts().
-    v_starts = valid_starts(params["numDays"], params["slotsPerDay"], params["duration"], "GUEST")
-
-    submissions = {}
-    num_conflicts = min(params["numForcedConflicts"], len(multi_program_guests))
-    forced_conflict_teacher_ids = set(random.sample(multi_program_guests, num_conflicts)) if num_conflicts else set()
-
-    guest_sections_by_teacher = {}
-    for s in sections:
-        if s["teacher_type"] == "GUEST":
-            guest_sections_by_teacher.setdefault(s["teacher_id"], []).append(s)
-
-    pct_pre_submitted = params.get("pctPreSubmitted", 70) / 100
-    pending_section_ids = []  # lop thinh giang CHUA duoc dieu phoi vien nop gio (submissions[sid] == [])
-
-    for tid, secs in guest_sections_by_teacher.items():
-        if tid in forced_conflict_teacher_ids and len(secs) >= 2:
-            # Cac ca cay xung dot luon duoc "nop san" de demo check-trung hoat dong ngay
-            fixed_slot = random.choice(v_starts)
-            for s in secs[:2]:
-                submissions[s["id"]] = [fixed_slot]
-            for s in secs[2:]:
-                submissions[s["id"]] = random.sample(v_starts, k=min(2, len(v_starts)))
-        else:
-            for s in secs:
-                if random.random() < pct_pre_submitted:
-                    k = 1 if random.random() < 0.2 else 2
-                    submissions[s["id"]] = random.sample(v_starts, k=min(k, len(v_starts)))
-                else:
-                    submissions[s["id"]] = []  # dieu phoi vien CHUA nop - cho nhap tay qua UI
-                    pending_section_ids.append(s["id"])
-
-    return {
-        "params": params,
-        "programs": programs,
-        "faculty_names": faculty_names,
-        "program_faculty": program_faculty,
-        "coordinator_names": coordinator_names,
-        "teachers": {t["id"]: t for t in teachers},
-        "sections": {s["id"]: s for s in sections},
-        "submissions": submissions,
-        "forced_conflict_teacher_ids": forced_conflict_teacher_ids,
-        "pending_section_ids": pending_section_ids,
-        "valid_starts": v_starts,
-        "num_resident": num_resident,
-        "num_guest": num_guest,
-        "num_programs": num_programs,
-    }
 
 
 def check_cross_program_conflicts(data):
@@ -559,8 +413,9 @@ def solve_resident_phase(data, frozen_guest_lessons, forbidden=None, time_limit_
         ghim_theo_file = (s.get("original_slot")
                           if not s.get("time_assumed") and sid not in bo_ghim else None)
 
-        # Khung gio GV DA KHAI cho lop nay (app._apply_section_time da giao khung
-        # cua ca nhom va loc theo do dai buoi). Rong = chua ai khai -> tu do.
+        # Khung gio GV DA KHAI cho lop nay (domain/time_rules.py:
+        # apply_section_time da giao khung cua ca nhom va loc theo do dai buoi).
+        # Rong = chua ai khai -> tu do.
         #
         # Truoc day Giai doan 2 KHONG doc submissions: co huu luon tu do ca tuan
         # (Thu 2-Thu 6), nen khai gio ranh cho co huu la vo tac dung. Nay khai roi
@@ -727,247 +582,4 @@ def solve_resident_phase(data, frozen_guest_lessons, forbidden=None, time_limit_
         "placedCount": len(lessons),
         "lessons": lessons,
         "unplaced": unplaced,
-    }
-
-
-def _parse_time_text(text):
-    """'Thu 3, tiet 2-3' -> [(day0idx, p_start, p_end)]. day0idx: Thu2=0..Thu7=5, CN=6.
-    Tra ve ([], True) neu co nhac den ngay nhung khong tim duoc tiet (khong doan)."""
-    if not text:
-        return [], False
-    sessions = []
-    any_unparsed = False
-    for line in str(text).split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-        days = [int(d) - 2 for d in _DAY_RE.findall(line)]
-        if _SUNDAY_RE.search(line):
-            days.append(6)
-        periods = _PERIOD_RE.findall(line)
-        if not days or not periods:
-            any_unparsed = True
-            continue
-        for d in days:
-            for p_start, p_end in periods:
-                sessions.append((d, int(p_start), int(p_end)))
-    return sessions, any_unparsed
-
-
-_NAME_SPLIT_RE = re.compile(r"[,\n]")  # GV dong giang day ngan boi dau phay HOAC xuong dong (ca 2 kieu deu gap)
-
-# Ten cot ma ham nay dung -> ten truong trong ban do cot cua fate_import.
-# Truoc day o day co _LAYOUT_OLD/_LAYOUT_NEW: hai bo chi so cot CO DINH, chon theo
-# TEN SHEET. Da vo voi file "FATE.TKB.HK1 2026-2027-2.xlsx" (cau truc HK1 nhung
-# sheet doi ten thanh "FATE" -> lech dung 1 cot tu dau den cuoi ma khong bao loi);
-# duong nhap file da chuyen sang doc theo NHAN o hang tieu de, cho nay dung lai
-# chinh bo doc do de khong con hai cach nhan dien layout trong cung mot repo.
-_COT_TU_FATE_IMPORT = {
-    "course": "courseName", "class_code": "classCode",
-    "lt_hours": "ltCredits", "th_hours": "thCredits",
-    "program": "program",
-    "thu": "thu", "tiet_dau": "tietDau", "tiet_cuoi": "tietCuoi",
-    "title": "teacherTitle", "name": "teacherName", "org": "teacherOrg",
-}
-
-
-def load_real_fate_data(xlsx_path, sheet_name=None, default_duration=2):
-    """Nap du lieu THAT tu file ke hoach giang day (Excel) thay cho generate_data()
-    gia lap. Tra ve dung cau truc 'data' de solve_guest_phase/solve_resident_phase/
-    check_cross_program_conflicts dung duoc khong can sua gi them.
-
-    Ban do cot doc tu chinh HANG TIEU DE cua file (fate_import.read_layout) - xem
-    _COT_TU_FATE_IMPORT. sheet_name (neu truyen) chi de chi dinh sheet, khong con
-    quyet dinh layout.
-
-    Phan loai GV co huu/thinh giang theo "Don vi cong tac": co chua "Viet Nhat"
-    -> RESIDENT, nguoc lai -> GUEST. Cac dong do "Phong Dao tao dieu phoi"/"JLE
-    dieu phoi" (khong phai 1 GV cu the) bi LOAI khoi bo du lieu nay.
-
-    Dong co GV nhung CHUA co Thu/Tiet (rat pho bien o layout moi - Khoa moi xep
-    xong "ai day", chua xep "luc nao") duoc coi la CAN THUAT TOAN TU XEP: GUEST
-    duoc cho tu do chon bat ky slot hop le trong tuan (thay vi bi buoc theo 1
-    window duy nhat), RESIDENT thi von da tu do o Giai doan 2 nen khong doi gi.
-    Duration cho cac dong nay dung mac dinh 'default_duration' (KHONG suy tu du
-    lieu thuc vi khong co gio de tinh) - danh dau ro qua co 'time_assumed'.
-    """
-    import openpyxl
-
-    # Import trong ham (khong o dau file): fate_import da `import scheduler_core`
-    # nen import nguoc o cap module se thanh vong tron.
-    import fate_import
-
-    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
-    if sheet_name is None:
-        sheet_name, layout, err = fate_import.detect_sheet(wb)
-        if err:
-            raise ValueError(err)
-    else:
-        layout = fate_import.read_layout(wb[sheet_name])
-        if layout is None:
-            raise ValueError(f"Khong doc duoc hang tieu de trong sheet '{sheet_name}'.")
-    first_data_row = layout["firstDataRow"]
-    sh = wb[sheet_name]
-    rows = list(sh.iter_rows(min_row=first_data_row, values_only=True))
-
-    max_period = 12
-    parsed_rows = []
-    last_course, last_class_code, last_lt, last_th = None, None, None, None
-
-    def col(row, key):
-        idx = layout.get(_COT_TU_FATE_IMPORT[key])
-        return row[idx] if idx is not None and idx < len(row) else None
-
-    for i, row in enumerate(rows):
-        excel_row = i + first_data_row
-        course = col(row, "course") or last_course
-        class_code = col(row, "class_code") or last_class_code
-        lt_hours = col(row, "lt_hours") if col(row, "lt_hours") is not None else last_lt
-        th_hours = col(row, "th_hours") if col(row, "th_hours") is not None else last_th
-        if col(row, "course"): last_course = col(row, "course")
-        if col(row, "class_code"): last_class_code = col(row, "class_code")
-        if col(row, "lt_hours") is not None: last_lt = col(row, "lt_hours")
-        if col(row, "th_hours") is not None: last_th = col(row, "th_hours")
-
-        program_raw = col(row, "program")
-        teacher_name = col(row, "name")
-
-        if not teacher_name:
-            continue
-        tkey = str(teacher_name).strip().lower()
-        if tkey in _PLACEHOLDER_TEACHERS or "điều phối" in tkey:
-            continue
-
-        org = col(row, "org") or ""
-        is_resident = "việt nhật" in str(org).lower() or "viet nhat" in str(org).lower()
-
-        # Mot o co the ghi NHIEU GV dong giang day, ngan boi dau phay HOAC xuong
-        # dong (ca 2 kieu deu gap tuy file). Tach rieng tung nguoi de kiem tra
-        # trung lich CHINH XAC cho tung ca nhan, khong coi ca cum la "1 GV ao".
-        teacher_names = [n.strip() for n in _NAME_SPLIT_RE.split(str(teacher_name)) if n.strip()]
-        if not teacher_names:
-            continue
-        title_raw = col(row, "title")
-
-        room_type = "LAB" if (th_hours or 0) > 0 else "LT"
-        common = {
-            "row": excel_row, "course": course, "class_code": class_code,
-            "program_raw": str(program_raw).strip() if program_raw else "Khac",
-            "teacher_names": teacher_names,
-            "teacher_title": (title_raw or "").strip(),
-            "org": org, "is_resident": is_resident, "room_type": room_type,
-        }
-
-        # --- Truong hop A: co gio ro rang ---
-        # NGUON GIO DUY NHAT la 3 cot Thu / Tiet dau / Tiet cuoi.
-        #
-        # Truoc day cot text tu do "Thoi gian (Thu, Tiet)" duoc uu tien HON (2 nguon
-        # hay lech nhau, do do tin text hon). Khoa da xac nhan cot text la CHO GHI CU
-        # cua cac ky truoc, du lieu bo di - nen bo han khoi moi duong doc. Dong nao
-        # khong co 3 cot nay thi coi nhu CHUA co gio, de thuat toan tu xep, chu khong
-        # quay ve doc text nua.
-        thu, tiet_dau, tiet_cuoi = col(row, "thu"), col(row, "tiet_dau"), col(row, "tiet_cuoi")
-        has_structured_time = all(isinstance(v, (int, float)) for v in (thu, tiet_dau, tiet_cuoi))
-        sessions = [(int(thu) - 2, int(tiet_dau), int(tiet_cuoi))] if has_structured_time else []
-
-        if sessions:
-            for day, p_start, p_end in sessions:
-                max_period = max(max_period, p_end + 1)
-                parsed_rows.append({**common, "day": day, "p_start": p_start,
-                                     "p_end": p_end, "time_assumed": False})
-        else:
-            # --- Truong hop B: CHUA co gio - can thuat toan tu xep ---
-            parsed_rows.append({**common, "day": None, "p_start": None,
-                                 "p_end": None, "time_assumed": True})
-
-    slots_per_day = max_period
-    params = {
-        "numDays": 7, "slotsPerDay": slots_per_day, "duration": default_duration,
-        "ltPool": 60, "labPool": 40,  # CHUA CO so lieu phong thuc te trong file -> dat rong de tap trung test GV
-        "seed": 0, "pctPreSubmitted": 100, "numForcedConflicts": 0,
-    }
-    # Chi feed vao free_choice_starts cua GUEST "chua bao gio" ben duoi.
-    v_starts_default = valid_starts(params["numDays"], slots_per_day, default_duration, "GUEST")
-
-    program_ids = {}
-    for r in parsed_rows:
-        program_ids.setdefault(r["program_raw"], len(program_ids))
-    faculty_names = ["FATE"]
-    program_faculty = {pid: 0 for pid in program_ids.values()}
-    coordinator_names = {pid: f"DPV-{name}" for name, pid in program_ids.items()}
-
-    # Moi ten GV rieng le -> 1 teacher_id rieng (dung chung 1 nguoi neu ten trung
-    # giua nhieu dong - vd 1 GV day nhieu lop). Voi dong "dong giang day" (nhieu
-    # ten trong 1 o), TAO/DUNG LAI id cho DUNG tung nguoi, khong gop thanh 1 "GV ao".
-    teacher_ids = {}
-    teachers = {}
-    for r in parsed_rows:
-        for i, name in enumerate(r["teacher_names"]):
-            if name not in teacher_ids:
-                tid = len(teacher_ids)
-                teacher_ids[name] = tid
-                # title chi chac chan dung cho nguoi DAU trong danh sach dong giang day
-                # (layout moi: title da nam san trong ten, khong can nhap them)
-                title = r["teacher_title"] if i == 0 else ""
-                teachers[tid] = {
-                    "id": tid, "name": f"{title} {name}".strip(),
-                    "type": "RESIDENT" if r["is_resident"] else "GUEST",
-                    "home_program": program_ids[r["program_raw"]],
-                    "org": r["org"],
-                }
-
-    sections = {}
-    submissions = {}
-    num_time_assumed = 0
-    for idx, r in enumerate(parsed_rows):
-        sid = idx
-        tids = [teacher_ids[name] for name in r["teacher_names"]]
-        primary_tid = tids[0]
-
-        if r["time_assumed"]:
-            num_time_assumed += 1
-            duration = default_duration
-            original_slot = None
-            free_choice_starts = v_starts_default
-        else:
-            duration = r["p_end"] - r["p_start"] + 1
-            original_slot = r["day"] * slots_per_day + (r["p_start"] - 1)
-            free_choice_starts = None
-
-        sections[sid] = {
-            "id": sid, "program": program_ids[r["program_raw"]],
-            "course_name": f"{r['course']} ({r['class_code']})" if r["class_code"] else r["course"],
-            "teacher_id": primary_tid, "teacher_ids": tids,
-            "teacher_type": teachers[primary_tid]["type"],
-            "room_type": r["room_type"], "duration": duration,
-            "source_row": r["row"], "original_slot": original_slot,
-            "time_assumed": r["time_assumed"],
-        }
-        if teachers[primary_tid]["type"] != "GUEST":
-            submissions[sid] = []  # RESIDENT: Giai doan 2 luon tu do chon, khong dung submissions
-        elif r["time_assumed"]:
-            submissions[sid] = free_choice_starts  # GUEST nhung CHUA bao gio -> tu do chon ca tuan
-        else:
-            submissions[sid] = [original_slot]  # GUEST da co gio -> dung DUNG gio do (nhu truoc)
-
-    num_resident = sum(1 for t in teachers.values() if t["type"] == "RESIDENT")
-    num_guest = len(teachers) - num_resident
-
-    return {
-        "params": params,
-        "programs": list(program_ids.values()),
-        "faculty_names": faculty_names,
-        "program_faculty": program_faculty,
-        "coordinator_names": coordinator_names,
-        "teachers": teachers,
-        "sections": sections,
-        "submissions": submissions,
-        "forced_conflict_teacher_ids": set(),
-        "pending_section_ids": [],
-        "valid_starts": v_starts_default,
-        "num_resident": num_resident,
-        "num_guest": num_guest,
-        "num_programs": len(program_ids),
-        "program_names_reverse": {v: k for k, v in program_ids.items()},
-        "num_time_assumed": num_time_assumed,  # so buoi KHONG co gio thuc, phai gia dinh duration+tu do chon
     }

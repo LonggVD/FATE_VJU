@@ -2,17 +2,16 @@
 """Doc file ke hoach giang day (Excel) ra cac DONG CHUAN HOA de nap vao form
 "Du lieu hoc phan".
 
-Khac gi voi scheduler_core.load_real_fate_data()?
-  - Ham do doc file cho THUAT TOAN: chi lay ~12 cot no can (mon/GV/gio/phong),
-    va tra ve thang cau truc solver. Khong co thuc the "hoc phan" (courses),
-    section chi giu 11 truong.
-  - Module nay doc file cho FORM: lay DU 29 cot ma bang mirror dang hien (ma HP,
-    so TC, khoa, so SV, email, SDT, dia diem, hinh thuc, ngon ngu, ghi chu...),
-    de giao vu nap file cu vao roi sua tiep nhu tu go tay.
+Doc file cho FORM: lay DU 29 cot ma bang mirror dang hien (ma HP, so TC, khoa,
+so SV, email, SDT, dia diem, hinh thuc, ngon ngu, ghi chu...), de giao vu nap
+file cu vao roi sua tiep nhu tu go tay. (Truoc day con mot duong doc thu hai
+chi lay ~12 cot cho rieng thuat toan - scheduler_core.load_real_fate_data - da
+bo, nay chi con MOT duong doc file duy nhat la module nay.)
 
 Module nay CHI doc va chuan hoa - khong dung toi Flask, khong dung toi STATE.
-Viec dung du lieu nhap tay tu cac dong nay do app.py lam, bang chinh cac ham ma
-endpoint nhap tay dung (_validate_section_body/_apply_section_time), de du lieu
+Viec dung du lieu nhap tay tu cac dong nay do domain/excel_rows.py lam, bang
+chinh cac ham ma endpoint nhap tay dung (domain/sections.py:
+validate_section_body va domain/time_rules.py: apply_section_time), de du lieu
 import ra khong khac gi du lieu go tay.
 """
 import re
@@ -569,7 +568,7 @@ def read_rows(source):
 
     rows, skipped, warnings = [], [], []
     # Excel gop o theo chieu doc cho cac cot muc hoc phan -> dong sau de trong,
-    # phai nho lai gia tri dong truoc (dung cach load_real_fate_data lam).
+    # phai nho lai gia tri dong truoc.
     carry = {"courseCode": None, "courseName": None, "credits": None,
              "classCode": None, "ltCredits": None, "thCredits": None}
 
