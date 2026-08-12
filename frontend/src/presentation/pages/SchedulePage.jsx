@@ -154,22 +154,34 @@ export default function SchedulePage({ role, filter, onFilterChange }) {
       value: sq ? `${sq.doneCount}/${sq.guestCount}` : "—",
       state: sq && sq.queue.length === 0 ? "done" : "todo",
     },
+    // guestResult/residentResult co the la LICH BAN DAU doc tu file (initial),
+    // chua phai ket qua giai - thanh tien trinh phai noi ro, khong thi nap file
+    // xong buoc 2/3 hien "done" ma chua ai bam Giai.
     {
       key: "guest",
       label: "Xếp thỉnh giảng",
-      value: guestResult ? `${guestResult.placedCount}/${guestResult.total}` : "chưa chạy",
-      state: guestResult ? "done" : "todo",
+      value: !guestResult
+        ? "chưa chạy"
+        : guestResult.initial
+          ? `${guestResult.placedCount} buổi chốt từ file`
+          : `${guestResult.placedCount}/${guestResult.total}`,
+      state: guestResult && !guestResult.initial ? "done" : "todo",
       action: solveGuest,
-      actionLabel: guestResult ? "Giải lại" : "Giải",
+      actionLabel: guestResult && !guestResult.initial ? "Giải lại" : "Giải",
     },
     {
       key: "resident",
       label: "Ghép cơ hữu",
-      value: residentResult ? `${residentResult.placedCount}/${residentResult.total}` : "chưa chạy",
-      state: residentResult ? "done" : "todo",
+      value: !residentResult
+        ? "chưa chạy"
+        : residentResult.initial
+          ? `${residentResult.placedCount} buổi chốt từ file`
+          : `${residentResult.placedCount}/${residentResult.total}`,
+      state: residentResult && !residentResult.initial ? "done" : "todo",
       action: solveResident,
-      actionLabel: residentResult ? "Giải lại" : "Giải",
-      disabled: !guestResult,
+      actionLabel: residentResult && !residentResult.initial ? "Giải lại" : "Giải",
+      // Lich ban dau khong tinh la "da chay Giai doan 1" (backend cung chan).
+      disabled: !guestResult || guestResult.initial,
     },
   ];
 

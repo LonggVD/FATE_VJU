@@ -277,9 +277,13 @@ const LessonCard = memo(function LessonCard({
                 <button
                   type="button"
                   className="tt-unpin-btn"
+                  // Bo ghim = THA LOP RA cho he thong xep lai - ke ca khi gio nay
+                  // la gio da chot trong file. Noi ro o title vi khong the doan
+                  // duoc tu chu "Bo ghim": lop van dung yen cho den lan giai sau.
+                  title="Thả lớp này ra để hệ thống xếp lại ở lần giải kế tiếp (kể cả giờ đã chốt trong file). Vị trí hiện tại chưa đổi ngay."
                   onClick={() => { onClearOverride(lesson.id); setLocked(false); }}
                 >
-                  Bỏ ghim
+                  Bỏ ghim — để hệ thống xếp lại
                 </button>
               )}
             </div>

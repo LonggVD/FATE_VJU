@@ -54,6 +54,12 @@ def slot_label(s, slots_per_day):
     return f"{DAY_NAMES[day]} tiet {period + 1}"
 
 
+def _giao_nhau(a, dur_a, b, dur_b):
+    """Hai buoi co chong gio nhau khong (cung mot cong thuc voi app._overlaps va
+    overlaps() ben frontend - ba noi phai giong nhau de khong bao lech)."""
+    return not (a + dur_a <= b or b + dur_b <= a)
+
+
 # Quy tac gio day: THINH GIANG duoc day toi Thu 7 (ngay index 5), CO HUU chi
 # duoc day toi Thu 6 (ngay index 4) - gio hanh chinh Thu 7 danh rieng cho
 # thinh giang, khong ai duoc day Chu nhat (index 6). Index tinh theo DAY_NAMES
@@ -426,28 +432,95 @@ def solve_guest_phase(data, time_limit_s=30):
     }
 
 
-def solve_resident_phase(data, frozen_guest_lessons, forbidden=None, time_limit_s=30):
-    """forbidden: dict {section_id: [danh sach slot bi tu choi]}"""
+def solve_resident_phase(data, frozen_guest_lessons, forbidden=None, time_limit_s=30,
+                         ghim_tay=None, bo_ghim=None):
+    """forbidden: dict {section_id: [danh sach slot bi tu choi]}
+    ghim_tay: dict {section_id: slot} - giao vu keo-tha/ghim tay o man TKB.
+    bo_ghim: set section_id - giao vu BAM "Bo ghim" o man TKB, tuc noi ro "cho he
+    thong xep lai lop nay". Bo qua ghim theo `original_slot` cho cac lop do; app.py
+    lo phan submissions (xem _mien_sau_khi_bo_ghim).
+
+    ghim_tay dat domain THANG bang slot do, khong di qua valid_starts(): nho vay
+    ghim duoc sang Thu 7/Chu nhat. Truoc day app.py ghim bang cach cam moi slot
+    hop le TRU slot da ghim, ma slot Chu nhat KHONG nam trong valid_starts cua
+    RESIDENT -> "cam tat ca" -> domain rong -> ghim bi bo qua am tham."""
     p = data["params"]
     forbidden = forbidden or {}
+    bo_ghim = bo_ghim or set()
     resident_sections = [s for s in data["sections"].values() if s["teacher_type"] == "RESIDENT"]
 
     model = cp_model.CpModel()
     starts, placed = {}, {}
     intervals_by_teacher = {}
-    intervals_by_roomtype = {
-        "LT": [model.NewFixedSizeIntervalVar(g["slot"], g.get("duration", p["duration"]), f"frozen_{g['id']}")
-               for g in frozen_guest_lessons if g["roomType"] == "LT"],
-        "LAB": [model.NewFixedSizeIntervalVar(g["slot"], g.get("duration", p["duration"]), f"frozen_{g['id']}")
-                for g in frozen_guest_lessons if g["roomType"] == "LAB"],
-    }
+    intervals_by_roomtype = {"LT": [], "LAB": []}
+
+    # Buoi da xep o Giai doan 1: dong bang (interval co dinh), dua vao CA HAI rang
+    # buoc - phong (Cumulative) VA khong-trung-gio theo tung GIANG VIEN.
+    #
+    # Truoc day chi dua vao rang buoc phong. Khong ai thay lo do vi mot GV co huu
+    # khong the co lop o GD1: loai lop = loai cua GV chinh. Nhung tu khi loai lop
+    # tinh theo CA NHOM (app._loai_lop: nhom co mot khach moi -> ca lop di GD1),
+    # mot GV CO HUU co the co lop o GD1 va lop khac o GD2 -> GD2 khong biet gio cua
+    # ho da bi chiem -> xep chong nhau. Do tren HK2: 2 GV nam o ca hai giai doan,
+    # va co lan chay ra dung 1 o chong nhau (solver co nhieu loi giai toi uu nen
+    # khong phai lan nao cung tro).
+    for g in frozen_guest_lessons:
+        iv = model.NewFixedSizeIntervalVar(
+            g["slot"], g.get("duration", p["duration"]), f"frozen_{g['id']}")
+        intervals_by_roomtype[g["roomType"]].append(iv)
+        for tid in (g.get("teacherIds") or [g["teacherId"]]):
+            intervals_by_teacher.setdefault(tid, []).append(iv)
 
     on_day_by_section = {}  # sid -> [bool theo ngay] - dung cho muc tieu dan ngay (phu)
+    pending_ids = set(data.get("pending_section_ids") or [])
 
     for s in resident_sections:
         sid = s["id"]
         own_valid_starts = valid_starts(p["numDays"], p["slotsPerDay"], s["duration"], "RESIDENT")
-        domain_starts = [v for v in own_valid_starts if v not in forbidden.get(sid, [])]
+        cam = forbidden.get(sid, [])
+
+        # Gio DA CHOT (doc tu file ke hoach giang day, hoac giao vu go tay vao form)
+        # -> GHIM dung o do, khong phai chon lai.
+        #
+        # Truoc day cho nay luon dung own_valid_starts, tuc GD2 xep lai tu dau moi
+        # lop co huu: do tren file HK1 2026-2027-2, 139/140 lop co gio chot bi xep
+        # sang gio khac (VJU2031 file ghi Thu 2 tiet 6 -> he thong xep Thu 3 tiet 1).
+        # Mot dong trong file la mot lop GV va dieu phoi vien da thong nhat gio voi
+        # nhau, he thong khong co quyen doi.
+        #
+        # Ghim bang cach thu hep DOMAIN chu khong AddHint: interval van la Optional
+        # nen neu o do bi trung (file co dong nhap trung) thi lop roi vao "khong xep
+        # duoc" kem ly do - thay vi lam ca bai toan vo nghiem, cung khong am tham
+        # doi gio da chot.
+        # `bo_ghim` la CHO DUY NHAT go duoc ghim nay: giao vu phai noi ro y minh
+        # bang mot cu bam, khong co duong nao khac lam gio trong file tu troi di.
+        ghim_theo_file = (s.get("original_slot")
+                          if not s.get("time_assumed") and sid not in bo_ghim else None)
+
+        # Khung gio GV DA KHAI cho lop nay (app._apply_section_time da giao khung
+        # cua ca nhom va loc theo do dai buoi). Rong = chua ai khai -> tu do.
+        #
+        # Truoc day Giai doan 2 KHONG doc submissions: co huu luon tu do ca tuan
+        # (Thu 2-Thu 6), nen khai gio ranh cho co huu la vo tac dung. Nay khai roi
+        # thi GIOI HAN CUNG, dung nhu Giai doan 1 lam voi thinh giang.
+        da_khai = data["submissions"].get(sid) or []
+        # DA KHAI gio nhung khong con khung nao du dai cho lop nay: app.py de
+        # submissions rong VA dua lop vao pending_section_ids. Phai phan biet voi
+        # "chua ai khai" (cung submissions rong nhung KHONG trong pending) - neu
+        # khong thi khai xong lai duoc tu do ca tuan, nguoc han y nghia.
+        khai_nhung_het_cho = (not da_khai) and sid in pending_ids
+
+        if sid in (ghim_tay or {}):
+            # Quyet dinh TAY o man TKB - moi nhat nen thang moi thu khac.
+            domain_starts = [ghim_tay[sid]]
+        elif cam:
+            domain_starts = [v for v in own_valid_starts if v not in cam]
+        elif ghim_theo_file is not None:
+            domain_starts = [ghim_theo_file]
+        elif da_khai:
+            domain_starts = list(da_khai)
+        else:
+            domain_starts = own_valid_starts
         if not domain_starts:
             domain_starts = own_valid_starts  # an toan: neu cam het thi bo qua cam
         start = model.NewIntVarFromDomain(cp_model.Domain.FromValues(domain_starts), f"start_{sid}")
@@ -458,17 +531,32 @@ def solve_resident_phase(data, frozen_guest_lessons, forbidden=None, time_limit_
         # phai bieu thuc) de dung lam dieu kien reify ben duoi.
         day_var = model.NewIntVar(0, p["numDays"] - 1, f"day_{sid}")
         model.AddDivisionEquality(day_var, start, p["slotsPerDay"])
+        # b = "lop nay DA XEP va roi vao ngay d". Chi can implication mot chieu:
+        #   b => (day_var == d) va b => is_placed
+        # cong voi sum(b) == is_placed.
+        #
+        # KHONG duoc them chieu nguoc (day_var != d khi b sai): `start` luon co mot
+        # gia tri cu the trong domain ke ca khi lop KHONG duoc xep, nen day_var luon
+        # bang dung mot ngay -> ep sum(b) == 1 -> is_placed bi ep = 1 cho MOI lop.
+        # Tuc Giai doan 2 khong he co khai niem "lop khong xep duoc": xep het thi
+        # OPTIMAL, khong thi INFEASIBLE va MAT TRANG ket qua. Lo ra ngay khi bat dau
+        # ghim gio da chot: HK2 tu 119/119 thanh INFEASIBLE 0/119 chi vi file co vai
+        # dong nhap trung doi cung mot o cua cung mot nguoi.
         on_day_bools = []
         for d in range(p["numDays"]):
             b = model.NewBoolVar(f"onday_{sid}_{d}")
             model.Add(day_var == d).OnlyEnforceIf(b)
-            model.Add(day_var != d).OnlyEnforceIf(b.Not())
+            model.AddImplication(b, is_placed)
             on_day_bools.append(b)
-        model.Add(sum(on_day_bools) == is_placed)  # dung 1 ngay "active" neu da xep, 0 neu chua
+        model.Add(sum(on_day_bools) == is_placed)
         on_day_by_section[sid] = on_day_bools
 
         starts[sid] = start
         placed[sid] = is_placed
+        if khai_nhung_het_cho:
+            # Khong xep duoc THAT (khung da khai khong con cho) - de solver bao ra
+            # thay vi am tham xep ra ngoai khung GV da khai.
+            model.Add(is_placed == 0)
         for tid in (s.get("teacher_ids") or [s["teacher_id"]]):
             intervals_by_teacher.setdefault(tid, []).append(interval)
         intervals_by_roomtype[s["room_type"]].append(interval)
@@ -503,6 +591,7 @@ def solve_resident_phase(data, frozen_guest_lessons, forbidden=None, time_limit_
     elapsed = time.time() - t0
 
     lessons = []
+    chua_xep = []
     for s in resident_sections:
         sid = s["id"]
         if solver.Value(placed[sid]) == 1:
@@ -522,6 +611,7 @@ def solve_resident_phase(data, frozen_guest_lessons, forbidden=None, time_limit_
         "total": len(resident_sections),
         "placedCount": len(lessons),
         "lessons": lessons,
+        "unplaced": unplaced,
     }
 
 
