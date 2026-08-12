@@ -14,10 +14,108 @@ import fate_audit
 import fate_import
 import scheduler_core as sc
 from domain.merge import noi_slots_per_day
+from domain.programs import canonical_program_name
 from domain.sections import empty_manual_data, id_moi, validate_section_body
 from domain.teachers import dem_lai_so_gv, loai_gv, phan_tu
 from domain.time_rules import apply_section_time
 from state import DAY_LABELS_VN
+
+
+def _so_sv(r):
+    """So SV du kien de so sanh; -1 khi o do bo trong (de trong LUON thua mot con
+    so that, du con so do la 0)."""
+    v = r.get("expectedStudents")
+    return v if isinstance(v, (int, float)) else -1
+
+
+def _khoa_trung(r):
+    """Khoa nhan dien MOT LOP-MOT BUOI de biet hai dong co phai nhap trung.
+
+    Gom du BON thanh phan, thieu mot cai la gop nham du lieu that:
+      - MA LOP      : ten dinh danh lop. Khong co thi khong the noi gi (xem duoi).
+      - GIANG VIEN  : chuan hoa qua fate_import.khoa_gv (bo hoc ham/dau cau) - cung
+                      mot nguoi hay duoc ghi 'PGS.TS. Bui Nguyen Quoc Trinh' o dong
+                      nay va 'Bui Nguyen Quoc Trinh' o dong kia. Thieu GV thi cac
+                      dong DONG GIANG (mot lop nhieu GV, moi nguoi mot dong) bi gop
+                      lam mot -> mat GV thu 2 tro di.
+      - GIO         : Thu + tiet dau + tiet cuoi. Thieu gio thi cac buoi KHAC NHAU
+                      trong tuan cua cung mot lop bi gop lam mot -> mat buoi day.
+      - CTDT        : chuan hoa thu tu ghep (canonical_program_name) de
+                      'ESCT+BICA' va 'BICA+ESCT' ra cung mot khoa. Thieu CTDT thi
+                      cac dong HOC GHEP (nhieu CTDT hoc chung mot buoi, moi CTDT
+                      mot dong voi si so rieng) bi gop lam mot -> mat si so: dong
+                      HIS1001 co 5 CTDT tong 244 SV se chi con 91.
+    """
+    return (
+        (r["classCode"] or "").strip().lower(),
+        fate_import.khoa_gv(r["teacherName"] or ""),
+        r["day"], r["periodStart"], r["periodEnd"],
+        canonical_program_name((r["program"] or "").strip()).lower(),
+    )
+
+
+def bo_dong_nhap_trung(rows):
+    """Bo cac DONG NHAP TRUNG, moi nhom chi giu dong co SO SV DU KIEN lon nhat.
+
+    Vi sao lay dong SV lon nhat chu khong cong don: hai dong trung nhau la CUNG
+    MOT lop duoc hai nguoi nhap hai lan (vd khoa nhap va CTDT nhap lai), moi nguoi
+    ghi mot con so uoc luong - vd SAS3039 co dong ghi 17 SV, dong ghi 20 SV cho
+    dung mot lop ESAS. Cong don thanh 37 la dem sinh vien hai lan. Con cac dong
+    HOC GHEP (nhieu CTDT that su hoc chung) KHONG bi coi la trung ca - CTDT nam
+    trong khoa gom, xem _khoa_trung().
+
+    Dong KHONG CO MA LOP duoc giu nguyen het: khong co gi dinh danh lop thi khong
+    the ket luan hai dong la mot. Trong file that co 10 dong bo trong ma lop, bo
+    trong ca gio, thuoc 10 CTDT khac nhau - gop theo cac truong con lai se lam
+    rung 9 lop that.
+
+    Tra ve (rows_giu, canh_bao) - canh_bao dung khuon {row, kind, detail} de vao
+    thang bang "Nen ra lai" o buoc xem truoc.
+    """
+    nhom = {}
+    thu_tu = []
+    giu_nguyen = []
+    for r in rows:
+        if not (r["classCode"] or "").strip():
+            giu_nguyen.append(r)
+            continue
+        k = _khoa_trung(r)
+        if k not in nhom:
+            nhom[k] = []
+            thu_tu.append(k)
+        nhom[k].append(r)
+
+    ra, canh_bao = [], []
+    for k in thu_tu:
+        ds = nhom[k]
+        if len(ds) == 1:
+            ra.append(ds[0])
+            continue
+        # max() tra ve phan tu DAU trong cac phan tu bang nhau -> trung si so thi
+        # giu dong xuat hien truoc trong file, on dinh giua cac lan nap.
+        giu = max(ds, key=_so_sv)
+        ra.append(giu)
+        bo = [x for x in ds if x is not giu]
+        canh_bao.append({
+            "row": giu["excelRow"], "kind": "dong_nhap_trung",
+            "detail": (
+                f"“{k[0]}” · {k[5] or 'không CTĐT'} · "
+                + (f"thứ {k[2] + 2}, tiết {k[3]}-{k[4]}" if k[2] is not None else "chưa có giờ")
+                + f" — {len(ds)} dòng "
+                + " · ".join(
+                    f"dòng {x['excelRow']}: {'—' if _so_sv(x) < 0 else int(_so_sv(x))} SV"
+                    + (" (GIỮ)" if x is giu else "")
+                    for x in ds
+                )
+            ),
+        })
+
+    # Tra lai dung THU TU trong file (theo dong Excel) - buoc xem truoc va cac bang
+    # ben duoi doc theo thu tu nay.
+    ra.extend(giu_nguyen)
+    ra.sort(key=lambda r: (r["excelRow"], r["day"] if r["day"] is not None else -1,
+                           r["periodStart"] or 0))
+    return ra, canh_bao
 
 
 def build_manual_data_from_rows(rows):
@@ -28,6 +126,12 @@ def build_manual_data_from_rows(rows):
     data = empty_manual_data()
     loi = []
     canh_bao = []
+
+    # Bo dong nhap trung TRUOC MOI THU: dong trung se dang ky GV/hoc phan va tao
+    # section y nhu dong that, tuc an mot phong rieng va lam solver doi hai lan
+    # tai nguyen cho cung mot lop.
+    rows, canh_bao_trung = bo_dong_nhap_trung(rows)
+    canh_bao.extend(canh_bao_trung)
 
     # PHAI noi truoc khi dung section: parse_class_time kiem tra tiet <= slotsPerDay
     # va apply_section_time tinh slot = day * slotsPerDay + (tiet - 1).
@@ -267,6 +371,11 @@ NHAN_LUU_Y = {
     "gop_bien_the_ten": "Cùng một người nhưng file ghi tên nhiều kiểu (có/không học hàm, "
                         "khác dấu cách, có số thứ tự) — đã gộp làm một người; nên rà lại "
                         "để chắc không phải hai người khác nhau",
+    "dong_nhap_trung": "NHẬP TRÙNG: nhiều dòng cùng mã lớp + cùng giảng viên + cùng giờ + "
+                       "cùng CTĐT — đã giữ dòng có Số SV dự kiến LỚN NHẤT và bỏ các dòng "
+                       "còn lại (hai dòng trùng là một lớp được nhập hai lần, cộng dồn sĩ "
+                       "số sẽ đếm sinh viên hai lần). Các lớp HỌC GHÉP — nhiều CTĐT học "
+                       "chung một buổi — KHÔNG bị gộp, vẫn giữ đủ từng dòng",
     "ngay_ngoai_quy_dinh_giu_nguyen": "Dạy Thứ 7/Chủ nhật, ngoài quy định (thỉnh giảng tới "
                                       "Thứ 7, cơ hữu tới Thứ 6) — GIỮ NGUYÊN vì là giờ đã "
                                       "chốt trong file, hệ thống không tự đổi",
