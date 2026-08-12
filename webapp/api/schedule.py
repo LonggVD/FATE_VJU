@@ -5,7 +5,8 @@ from flask import Blueprint, jsonify, request
 
 from api.common import can_du_lieu, loi, tra_du_lieu
 from domain.chot import khoa_vi_da_chot
-from domain.pinning import attach_ca_hai, attach_override_metadata, detect_move_conflict
+from domain.pinning import (attach_ca_hai, attach_override_metadata,
+                            detect_move_conflict, dong_bo_ket_qua)
 from domain.time_rules import apply_section_time, overlaps
 from snapshot import save_snapshot
 from state import DAY_LABELS_VN, STATE
@@ -191,6 +192,10 @@ def api_save_schedule(data):
         else:
             s["schedule_status"] = "scheduled"
 
+    # Gio vua duoc ghi thanh gio CHINH THUC cua lop - dong bo lai luoi de nhan/
+    # ten/giai doan cua tung buoi khop voi ban vua luu (vi tri khong doi: chinh
+    # vi tri dang hien vua duoc sao sang sections).
+    dong_bo_ket_qua(data)
     save_snapshot()
     return tra_du_lieu(data, savedCount=saved_count, problemCount=problem_count,
                        missingCount=missing_count)

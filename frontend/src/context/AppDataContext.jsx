@@ -34,10 +34,29 @@ export function AppDataProvider({ children }) {
     }
   }, [log]);
 
+  // Gan MOT LUOT ca du lieu hoc phan VA luoi Thoi khoa bieu tu mot phan hoi.
+  //
+  // Moi endpoint sua du lieu deu tra kem guestResult/residentResult da dong bo
+  // (xem api/common.py: tra_du_lieu + domain/pinning.py: dong_bo_ket_qua). Truoc
+  // day cac handler o duoi chi goi setData, nen sua form o "Du lieu hoc phan"
+  // xong thi bang doi ngay ma man "Thoi khoa bieu" van hien ban CU: lop moi them
+  // khong xuat hien, lop doi Thu/Tiet van nam o o cu, xoa gio roi buoi van con
+  // tren luoi, doi loai GV thi buoi ket lai o giai doan cu. Hai man noi hai
+  // chuyen khac nhau ve cung mot lop cho toi khi bam Giai lai hoac F5.
+  //
+  // Phan biet "khong gui" voi "gui null" bang `in`: null la gia tri HOP LE (chua
+  // giai lan nao / vua xoa het du lieu), phai gan de luoi trong that su.
+  const apDungPhanHoi = useCallback((res) => {
+    if (!res) return;
+    if (res.classes) setData(res);
+    if ("guestResult" in res) setGuestResult(res.guestResult);
+    if ("residentResult" in res) setResidentResult(res.residentResult);
+  }, []);
+
   const refreshData = useCallback(() => runAction(
     () => scheduler.getData(),
-    { onSuccess: setData, errorPrefix: "Không lấy được dữ liệu" },
-  ), [runAction]);
+    { onSuccess: apDungPhanHoi, errorPrefix: "Không lấy được dữ liệu" },
+  ), [runAction, apDungPhanHoi]);
 
   // Nap lai TOAN BO trang thai dang co ben Flask NGAY khi mo app: du lieu hoc
   // phan + ket qua giai.
@@ -149,22 +168,22 @@ export function AppDataProvider({ children }) {
   const doSaveSchedule = useCallback(() => runAction(
     () => scheduler.saveSchedule(),
     {
-      onSuccess: setData,
+      onSuccess: apDungPhanHoi,
       messageFn: (res) => `Đã lưu ${res.savedCount} buổi vào Dữ liệu học phần` +
         (res.problemCount ? ` — ${res.problemCount} buổi có vấn đề` : "") +
         (res.missingCount ? `, ${res.missingCount} buổi vẫn chưa có giờ` : "") + ".",
       errorPrefix: "Lưu thời khoá biểu thất bại",
     },
-  ), [runAction]);
+  ), [runAction, apDungPhanHoi]);
 
   const initManual = useCallback(() => runAction(
     () => scheduler.initManual(),
     {
-      onSuccess: (res) => { setData(res); setGuestResult(null); setResidentResult(null); },
+      onSuccess: apDungPhanHoi,
       messageFn: () => "Đã xóa dữ liệu cũ, bắt đầu nhập liệu thủ công từ đầu.",
       errorPrefix: "Khởi tạo nhập liệu thủ công thất bại",
     },
-  ), [runAction]);
+  ), [runAction, apDungPhanHoi]);
 
   // Doc file va tra ve ban xem truoc. KHONG setData - buoc nay chua ghi gi ca,
   // nen cung khong duoc dong vao du lieu dang hien tren man.
@@ -173,21 +192,21 @@ export function AppDataProvider({ children }) {
   const doChotCourse = useCallback((courseId, payload) => runAction(
     () => scheduler.chotCourse(courseId, payload),
     {
-      onSuccess: (res) => res.classes && setData(res),
+      onSuccess: apDungPhanHoi,
       messageFn: (res) =>
         `Đã chốt lịch học phần "${res.courseName}" — ${res.chotCount} lớp, ghim cứng.`,
       errorPrefix: "Không chốt được",
     },
-  ), [runAction]);
+  ), [runAction, apDungPhanHoi]);
 
   const doBoChotCourse = useCallback((courseId) => runAction(
     () => scheduler.boChotCourse(courseId),
     {
-      onSuccess: (res) => res.classes && setData(res),
+      onSuccess: apDungPhanHoi,
       messageFn: (res) => `Đã bỏ chốt học phần "${res.courseName}" — giờ trả về trạng thái trước khi chốt.`,
       errorPrefix: "Không bỏ chốt được",
     },
-  ), [runAction]);
+  ), [runAction, apDungPhanHoi]);
 
   const doImportPreview = useCallback((file) => runAction(
     () => scheduler.importPreview(file),
@@ -213,13 +232,13 @@ export function AppDataProvider({ children }) {
   const doLecturersCommit = useCallback(() => runAction(
     () => scheduler.lecturersCommit(),
     {
-      onSuccess: (res) => res.classes && setData(res),
+      onSuccess: apDungPhanHoi,
       messageFn: (res) =>
         `Đã nạp danh sách ${res.count} giảng viên cơ hữu` +
         (res.changed?.length ? ` — đổi loại ${res.changed.length} người.` : " — không ai bị đổi loại."),
       errorPrefix: "Không nạp được danh sách",
     },
-  ), [runAction]);
+  ), [runAction, apDungPhanHoi]);
 
   const doImportCommit = useCallback((mode = "replace") => runAction(
     () => scheduler.importCommit(mode),
@@ -259,63 +278,63 @@ export function AppDataProvider({ children }) {
   const addManualTeacher = useCallback((payload) => runAction(
     () => scheduler.addManualTeacher(payload),
     {
-      onSuccess: setData,
+      onSuccess: apDungPhanHoi,
       messageFn: () => `Đã thêm giảng viên "${payload.name}" (${payload.teacherType === "GUEST" ? "thỉnh giảng" : "cơ hữu"}).`,
       errorPrefix: "Thêm giảng viên thất bại",
     },
-  ), [runAction]);
+  ), [runAction, apDungPhanHoi]);
 
   const updateManualTeacher = useCallback((teacherId, payload) => runAction(
     () => scheduler.updateManualTeacher(teacherId, payload),
     {
-      onSuccess: setData,
+      onSuccess: apDungPhanHoi,
       messageFn: () => (payload.availability
         ? `Đã lưu giờ có thể dạy cho giảng viên #${teacherId}.`
         : `Đã lưu thông tin giảng viên #${teacherId}.`),
       errorPrefix: "Sửa giảng viên thất bại",
     },
-  ), [runAction]);
+  ), [runAction, apDungPhanHoi]);
 
   const addManualCourse = useCallback((payload) => runAction(
     () => scheduler.addManualCourse(payload),
     {
-      onSuccess: setData,
+      onSuccess: apDungPhanHoi,
       messageFn: () => `Đã thêm học phần "${payload.name}".`,
       errorPrefix: "Thêm học phần thất bại",
     },
-  ), [runAction]);
+  ), [runAction, apDungPhanHoi]);
 
   const updateManualCourse = useCallback((courseId, payload) => runAction(
     () => scheduler.updateManualCourse(courseId, payload),
     {
-      onSuccess: setData,
+      onSuccess: apDungPhanHoi,
       messageFn: () => `Đã sửa học phần #${courseId}.`,
       errorPrefix: "Sửa học phần thất bại",
     },
-  ), [runAction]);
+  ), [runAction, apDungPhanHoi]);
 
   const addManualSection = useCallback((payload) => runAction(
     () => scheduler.addManualSection(payload),
     {
-      onSuccess: setData,
+      onSuccess: apDungPhanHoi,
       messageFn: () => `Đã thêm lớp "${payload.classCode || payload.courseId}".`,
       errorPrefix: "Thêm lớp thất bại",
     },
-  ), [runAction]);
+  ), [runAction, apDungPhanHoi]);
 
   const updateManualSection = useCallback((sectionId, payload) => runAction(
     () => scheduler.updateManualSection(sectionId, payload),
     {
-      onSuccess: setData,
+      onSuccess: apDungPhanHoi,
       messageFn: () => `Đã lưu lớp #${sectionId}.`,
       errorPrefix: "Sửa lớp thất bại",
     },
-  ), [runAction]);
+  ), [runAction, apDungPhanHoi]);
 
   const doClearManualTimes = useCallback((sectionIds) => runAction(
     () => scheduler.clearManualTimes(sectionIds),
     {
-      onSuccess: setData,
+      onSuccess: apDungPhanHoi,
       messageFn: (res) =>
         `Đã xoá giờ của ${res.clearedCount} lớp — chuyển về "để hệ thống tự xếp".` +
         // Mon da chot khong bi xoa gio (backend chan) - phai noi ra, neu khong
@@ -323,16 +342,16 @@ export function AppDataProvider({ children }) {
         (res.skippedChotCount ? ` Bỏ qua ${res.skippedChotCount} lớp thuộc học phần đã chốt lịch.` : ""),
       errorPrefix: "Xoá giờ thất bại",
     },
-  ), [runAction]);
+  ), [runAction, apDungPhanHoi]);
 
   const deleteManualSection = useCallback((sectionId) => runAction(
     () => scheduler.deleteManualSection(sectionId),
     {
-      onSuccess: setData,
+      onSuccess: apDungPhanHoi,
       messageFn: () => `Đã xóa lớp #${sectionId}.`,
       errorPrefix: "Xóa lớp thất bại",
     },
-  ), [runAction]);
+  ), [runAction, apDungPhanHoi]);
 
   const value = {
     data, guestResult, residentResult, loading, error,

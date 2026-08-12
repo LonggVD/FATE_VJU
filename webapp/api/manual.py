@@ -11,6 +11,7 @@ from flask import Blueprint, request
 from api.common import can_du_lieu, loi, tra_du_lieu
 from domain.availability import parse_availability_slots
 from domain.chot import khoa_vi_da_chot
+from domain.pinning import dong_bo_ket_qua, ghim_theo_gio_form
 from domain.sections import empty_manual_data, id_moi, validate_section_body
 from domain.teachers import dem_lai_so_gv, sync_teacher_sections
 from domain.time_rules import apply_section_time
@@ -51,6 +52,7 @@ def api_manual_clear_times(data):
 
     cleared = 0
     bo_qua_da_chot = 0
+    da_xoa = []
     for sid in section_ids:
         s = data["sections"].get(sid)
         teacher = data["teachers"].get(s["teacher_id"]) if s else None
@@ -62,11 +64,17 @@ def api_manual_clear_times(data):
             bo_qua_da_chot += 1
             continue
         apply_section_time(data, sid, teacher, s["duration"], None)
+        # Go ghim: khong go thi lop van bi ep ve gio vua xoa o lan Giai ke tiep,
+        # tuc nut "Xoa gio" khong lam gi ca (xem ghim_theo_gio_form).
+        ghim_theo_gio_form(data, sid, None)
         # Gio cu khong con - "Trang thai lich" (tu Luu thoi khoa bieu) da het
         # nghia, khong the de nguyen kieu "Da xep" tren mot lop vua bi xoa gio.
         s["schedule_status"] = None
+        da_xoa.append(sid)
         cleared += 1
 
+    # Lop vua bi xoa gio phai RUNG KHOI luoi Thoi khoa bieu - xem bo_vi_tri_cu.
+    dong_bo_ket_qua(data, da_xoa)
     save_snapshot()
     return tra_du_lieu(data, clearedCount=cleared, skippedChotCount=bo_qua_da_chot)
 
@@ -150,6 +158,11 @@ def api_manual_update_teacher(data, teacher_id):
     dem_lai_so_gv(data)
     sync_teacher_sections(data, teacher_id)
 
+    # Doi loai GV lam cac lop cua ho NHAY GIAI DOAN (thinh giang <-> co huu), va
+    # doi ten thi the buoi tren luoi phai ghi ten moi. KHONG truyen bo_vi_tri_cu:
+    # cac lop nay khong bi ghi lai gio, nghiem cua lan giai truoc van la thong tin
+    # dung nhat ve cho cua chung.
+    dong_bo_ket_qua(data)
     save_snapshot()
     return tra_du_lieu(data)
 
@@ -209,6 +222,8 @@ def api_manual_update_course(data, course_id):
         if s.get("course_id") == course_id:
             s["course_name"] = f"{course['name']} ({s['class_code']})" if s.get("class_code") else course["name"]
 
+    # Ten mon vua doi -> the buoi tren luoi Thoi khoa bieu phai ghi ten moi.
+    dong_bo_ket_qua(data)
     save_snapshot()
     return tra_du_lieu(data)
 
@@ -236,7 +251,11 @@ def api_manual_add_section(data):
     sid = id_moi(data["sections"])
     data["sections"][sid] = {"id": sid, **fields}
     apply_section_time(data, sid, teacher, duration, time_info)
+    ghim_theo_gio_form(data, sid, time_info)
 
+    # Lop moi co gio co dinh phai hien tren luoi Thoi khoa bieu NGAY - khong thi
+    # giao vu them lop xong sang man TKB khong thay gi va tuong minh chua luu.
+    dong_bo_ket_qua(data, [sid])
     save_snapshot()
     return tra_du_lieu(data)
 
@@ -266,7 +285,11 @@ def api_manual_update_section(data, section_id):
 
     data["sections"][section_id].update(fields)
     apply_section_time(data, section_id, teacher, duration, time_info)
+    ghim_theo_gio_form(data, section_id, time_info)
 
+    # Gio/GV/hoc phan cua lop vua doi -> luoi Thoi khoa bieu phai theo. Truyen
+    # section_id vao bo_vi_tri_cu: gio vua go tay thang vi tri cu tren luoi.
+    dong_bo_ket_qua(data, [section_id])
     save_snapshot()
     return tra_du_lieu(data)
 
@@ -275,11 +298,12 @@ def api_manual_update_section(data, section_id):
 @can_du_lieu
 def api_manual_delete_section(data, section_id):
     """Xoa 1 lop nhap nham - don luon submissions/pending_section_ids/overrides
-    lien quan de khong con tham chieu treo den sectionId da mat. Don CA
-    guestResult/residentResult dang cache (neu da giai truoc do) - khong lam
-    vay thi lop da xoa van con hien "ma" tren luoi Thoi khoa bieu cho toi khi
-    giai lai, vi 2 ket qua nay la snapshot rieng, khong tu dong doc lai
-    data['sections'] moi lan render."""
+    lien quan de khong con tham chieu treo den sectionId da mat.
+
+    dong_bo_ket_qua() don CA guestResult/residentResult dang cache (neu da giai
+    truoc do) - khong lam vay thi lop da xoa van con hien "ma" tren luoi Thoi khoa
+    bieu cho toi khi giai lai, vi 2 ket qua nay la snapshot rieng, khong tu dong
+    doc lai data['sections'] moi lan render."""
     if section_id not in data["sections"]:
         return loi(f"Không tìm thấy lớp id={section_id}.")
 
@@ -290,12 +314,6 @@ def api_manual_delete_section(data, section_id):
     STATE["overrides"].pop(section_id, None)
     STATE["bo_ghim"].discard(section_id)
 
-    for result in (STATE["guestResult"], STATE["residentResult"]):
-        if not result:
-            continue
-        result["lessons"] = [l for l in result["lessons"] if l["id"] != section_id]
-        if "unplaced" in result:
-            result["unplaced"] = [u for u in result["unplaced"] if u["id"] != section_id]
-
+    dong_bo_ket_qua(data, [section_id])
     save_snapshot()
     return tra_du_lieu(data)

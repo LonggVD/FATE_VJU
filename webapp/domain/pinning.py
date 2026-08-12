@@ -58,6 +58,36 @@ def detect_move_conflict(data, section_id, slot):
     }
 
 
+def buoi_tren_luoi(data, s, slot):
+    """Mot BUOI HOC de dat len luoi Thoi khoa bieu, dung khuon ma
+    solve_guest_phase()/solve_resident_phase() tra ve - de frontend
+    (adapters/lessonAdapter.js) doc duoc y nhu buoi do solver xep.
+
+    Mot cho duy nhat dung khuon nay (lich ban dau tu file, va dong bo lai sau moi
+    lan sua form) - truoc day lich ban dau tu ghep dict rieng nen thieu
+    programIds/programParts/facultyName, khien bo loc theo CTDT/Khoa tren man
+    Thoi khoa bieu khong loc duoc gi cho toi khi bam Giai.
+    """
+    slots_per_day = data["params"]["slotsPerDay"]
+    day, period = divmod(slot, slots_per_day)
+    return {
+        "id": s["id"], "teacherId": s["teacher_id"],
+        "teacherName": sc.teacher_display(data, s["teacher_id"]),
+        "teacherIds": list(s.get("teacher_ids") or [s["teacher_id"]]),
+        "courseName": s.get("course_name"), "program": s["program"],
+        "programLabel": sc.section_program_label(data, s),
+        "programIds": sc.section_program_ids(s),
+        "programParts": sc.section_program_names(data, s),
+        "facultyName": sc.section_faculty_name(data, s),
+        "coordinator": ", ".join(sc.section_coordinators(data, s)),
+        "classCode": s.get("class_code"),
+        "roomType": s["room_type"], "day": day, "period": period,
+        "slot": slot, "duration": s["duration"],
+        "teacherType": s["teacher_type"], "status": "DRAFT",
+        "usedWindowLabel": sc.slot_label(slot, slots_per_day),
+    }
+
+
 def lich_ban_dau(data):
     """Dung LICH BAN DAU tu cac lop DA CHOT GIO trong file, khong chay solver.
 
@@ -70,34 +100,131 @@ def lich_ban_dau(data):
     initial=True de UI biet day KHONG phai ket qua da giai (thanh tien trinh van
     hien "chua chay", nut buoc 3 van cho chay buoc 2 truoc).
     """
-    p = data["params"]
     theo_pha = {"GUEST": [], "RESIDENT": []}
     for sid, s in data["sections"].items():
         if s.get("time_assumed") or s.get("original_slot") is None:
             continue
-        day, period = divmod(s["original_slot"], p["slotsPerDay"])
-        theo_pha.setdefault(s["teacher_type"], []).append({
-            "id": sid, "teacherId": s["teacher_id"],
-            "teacherName": sc.teacher_display(data, s["teacher_id"]),
-            "teacherIds": list(s.get("teacher_ids") or [s["teacher_id"]]),
-            "courseName": s.get("course_name"), "program": s["program"],
-            "programLabel": sc.section_program_label(data, s),
-            "coordinator": ", ".join(sc.section_coordinators(data, s)),
-            "roomType": s["room_type"], "day": day, "period": period,
-            "slot": s["original_slot"], "duration": s["duration"],
-            "teacherType": s["teacher_type"], "status": "DRAFT",
-        })
+        theo_pha.setdefault(s["teacher_type"], []).append(
+            buoi_tren_luoi(data, s, s["original_slot"]))
 
-    def goi(loai):
+    return (_goi_ket_qua(data, "GUEST", theo_pha["GUEST"]),
+            _goi_ket_qua(data, "RESIDENT", theo_pha["RESIDENT"]))
+
+
+def _goi_ket_qua(data, loai, lessons):
+    """Khuon ket qua "chua giai" - chi la cac gio DA CO SAN dat len luoi."""
+    return {
+        "status": "TU_FILE", "elapsedSeconds": 0.0,
+        "total": sum(1 for s in data["sections"].values() if s["teacher_type"] == loai),
+        "placedCount": len(lessons), "lessons": sorted(lessons, key=lambda l: l["id"]),
+        "unplaced": [], "initial": True,
+    }
+
+
+def ghim_theo_gio_form(data, sid, time_info):
+    """Cap nhat GHIM sau khi mot form o "Du lieu hoc phan" dat/xoa gio cua lop.
+
+    PHAI goi o moi cho form ghi gio. Bo qua buoc nay la loi da tung xay ra: nap
+    file xong, MOI lop co gio deu duoc ghim (ghim_gio_da_chot). Giao vu sua Thu/
+    Tiet trong form -> section doi sang gio moi, nhung ghim VAN tro gio cu, va
+    ghim thang o ca ba noi:
+      - bang "Du lieu hoc phan" in lai gio CU (build_classes_list doc overrides),
+        nen cong sua vua roi nhu bien mat;
+      - luoi Thoi khoa bieu giu buoi o o cu;
+      - lan Giai lai ke tiep bi ep `submissions=[slot cu]` nen lop nhay ve cho cu.
+
+    Gio do co dinh la mot QUYET DINH cua con nguoi, y het keo-tha tren luoi - nen
+    ghim theo dung gio moi. Xoa gio ("de he thong tu xep") thi go ghim de solver
+    duoc tu do chon lai.
+    """
+    if time_info is None:
+        STATE["overrides"].pop(sid, None)
+        return
+    slot = data["sections"][sid].get("original_slot")
+    if slot is None:
+        STATE["overrides"].pop(sid, None)
+        return
+    STATE["overrides"][sid] = {
+        "slot": slot, "reason": "Giờ đã nhập ở Dữ liệu học phần", "problem": None,
+    }
+    # Gio vua go tay la y kien MOI NHAT -> khong con la lop "cho he thong xep lai".
+    STATE["bo_ghim"].discard(sid)
+
+
+def dong_bo_ket_qua(data, bo_vi_tri_cu=()):
+    """Dong bo LUOI THOI KHOA BIEU dang cache (STATE guest/residentResult) voi
+    data['sections'] hien tai. Goi sau MOI thao tac sua du lieu hoc phan.
+
+    Vi sao can: guest/residentResult la SNAPSHOT rieng, khong tu doc lai
+    data['sections'] moi lan render. Sua lop/GV/hoc phan qua form ma khong dong bo
+    thi man Thoi khoa bieu con hien ban cu: lop moi them khong xuat hien, lop doi
+    gio van o o cu, doi ten mon/GV thi the buoi ghi ten cu, va doi loai GV thi
+    buoi ket lai o giai doan cu.
+
+    `bo_vi_tri_cu`: cac section_id vua bi form GHI LAI GIO - voi chung, KHONG
+    duoc dung vi tri cu tren luoi lam can cu nua. Can co tham so nay vi mot lop
+    "de he thong tu xep" khong co gio rieng, nghiem cua solver la thu duy nhat
+    noi no dang o dau -> phai giu. Nhung mot lop VUA BI XOA GIO thi cung o dung
+    trang thai do (time_assumed=True, khong co original_slot), khong the phan biet
+    bang du lieu; nen cho ben goi noi ro no vua cham vao nhung lop nao.
+    """
+    bo_vi_tri_cu = set(bo_vi_tri_cu)
+
+    # Vi tri solver da chon cho tung buoi (doc TRUOC khi dung lai luoi).
+    slot_solver = {}
+    for res in (STATE["guestResult"], STATE["residentResult"]):
+        for l in (res or {}).get("lessons") or []:
+            if l["id"] not in bo_vi_tri_cu:
+                slot_solver[l["id"]] = l["slot"]
+
+    theo_pha = {"GUEST": [], "RESIDENT": []}
+    for sid, s in data["sections"].items():
+        slot = _slot_len_luoi(data, sid, slot_solver)
+        if slot is None:
+            continue
+        theo_pha.setdefault(s["teacher_type"], []).append(buoi_tren_luoi(data, s, slot))
+
+    for loai, khoa in (("GUEST", "guestResult"), ("RESIDENT", "residentResult")):
         lessons = sorted(theo_pha[loai], key=lambda l: l["id"])
-        return {
-            "status": "TU_FILE", "elapsedSeconds": 0.0,
-            "total": sum(1 for s in data["sections"].values() if s["teacher_type"] == loai),
-            "placedCount": len(lessons), "lessons": lessons, "unplaced": [],
-            "initial": True,
-        }
+        cu = STATE[khoa]
+        if cu is None:
+            # Chua giai lan nao va cung chua nap file: chi dung ket qua "chua
+            # giai" khi that su co gio de hien, khong tao khung rong.
+            if lessons:
+                STATE[khoa] = _goi_ket_qua(data, loai, lessons)
+                attach_override_metadata(data, STATE[khoa], loai)
+            continue
+        cu["lessons"] = lessons
+        cu["placedCount"] = len(lessons)
+        cu["total"] = sum(1 for s in data["sections"].values() if s["teacher_type"] == loai)
+        # Buoi da co cho tren luoi thi khong con "khong xep duoc"; buoi da bi xoa
+        # thi khong con gi de noi. Cac muc con lai giu NGUYEN VAN ban solver tra
+        # ve (kem `blockers` giai thich vi sao) - khong tu dung muc unplaced moi:
+        # lop giao vu vua chuyen sang "de he thong tu xep" chua duoc giai, no
+        # KHONG phai "solver khong xep duoc".
+        tren_luoi = {l["id"] for l in lessons}
+        cu["unplaced"] = [u for u in (cu.get("unplaced") or [])
+                          if u["id"] in data["sections"] and u["id"] not in tren_luoi]
+        attach_override_metadata(data, cu, loai)
 
-    return goi("GUEST"), goi("RESIDENT")
+
+def _slot_len_luoi(data, sid, slot_solver):
+    """Buoi nay phai hien o o gio nao tren luoi? None = chua o dau ca.
+
+    Thu tu uu tien, tu manh den yeu:
+      1. GHIM  - keo-tha sua tay, hoac gio vua go o form (ghim_theo_gio_form)
+      2. GIO CO DINH cua lop - con nguoi da chot, solver buoc phai theo
+      3. NGHIEM SOLVER - lop "de he thong tu xep", chi solver biet no o dau
+    Dung thu tu ma _detect_move_conflict/chot.slot_dang_hien dang dung, chi khac
+    o cho (2) len truoc (3): gio con nguoi vua go phai thang mot nghiem cu.
+    """
+    ov = STATE["overrides"].get(sid)
+    if ov and ov.get("slot") is not None:
+        return ov["slot"]
+    s = data["sections"][sid]
+    if not s.get("time_assumed") and s.get("original_slot") is not None:
+        return s["original_slot"]
+    return slot_solver.get(sid)
 
 
 def ghim_gio_da_chot(data):
