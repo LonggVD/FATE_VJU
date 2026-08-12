@@ -54,3 +54,8 @@ export const clearManualTimes = (sectionIds) => apiPost("/api/manual/clear-times
 export const markHocChung = (sectionIds, payload = {}) =>
   apiPost("/api/manual/hoc-chung", { sectionIds, ...payload });
 export const unmarkHocChung = (groupId) => apiDelete(`/api/manual/hoc-chung/${groupId}`);
+
+// "Huy thay doi" o man Thoi khoa bieu: tra TOAN BO trang thai ve dung lan LUU gan
+// nhat (hoac luc vua nap file, neu chua luu lan nao) - gio cua moi lop, ghim,
+// trang thai chot, nhom hoc chung va ca luoi. Xem webapp/domain/hoan_tac.py: dat_moc().
+export const hoanTac = () => apiPost("/api/manual/hoan-tac");
