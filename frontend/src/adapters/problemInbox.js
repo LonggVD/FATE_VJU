@@ -172,6 +172,55 @@ function looksDuplicated(a, b) {
  * @param pendingMove buoi vua tha nhung CHUA luu ({sectionId, toSlot}) - tinh
  *   luon vao de mau/canh bao doi ngay khi tha, khong doi bam Luu.
  */
+/**
+ * Loc hop thu theo DUNG pham vi dang chon o luoi (bo loc cua man Thoi khoa bieu).
+ *
+ * Vi sao can: hop thu duoc dung tu du lieu GOC nen truoc day chon "chuong trinh
+ * BCSE" hay mot khoa cu the thi luoi thu hep lai con hop thu van bao y nguyen
+ * ca 33 van de - doc thanh "loc xong van con tung day van de trong pham vi nay",
+ * tuc noi sai. Loc o day chu khong trong buildProblemInbox: `inbox` day du con
+ * duoc buildScheduleView dung de to mau/danh dau buoi co van de tren luoi.
+ *
+ * Mot VU lien quan nhieu lop (trung gio giua hai lop). Giu vu do neu CO IT NHAT
+ * MOT lop thuoc pham vi - bo di thi lop trong pham vi mat luon loi giai thich
+ * vi sao no co van de.
+ */
+export function filterProblemInbox(inbox, data, filter) {
+  const scope = filter?.scope;
+  const value = filter?.scopeValue;
+  if (!inbox || !scope || scope === "all" || value === "" || value == null) return inbox;
+
+  const byId = new Map((data?.classes ?? []).map((c) => [c.sectionId, c]));
+  const trongPhamVi = (sid) => {
+    const c = byId.get(sid);
+    if (!c) return false;
+    if (scope === "program") return (c.programParts ?? []).includes(value);
+    if (scope === "cohort") return (c.cohortParts ?? []).includes(value);
+    if (scope === "teacher") return (c.teacherIds ?? [c.teacherId]).includes(Number(value));
+    return true;
+  };
+  const hop = (ids) => (ids ?? []).some(trongPhamVi);
+
+  const items = inbox.items.filter((it) => hop(it.sectionIds));
+  const byType = {};
+  for (const it of items) byType[it.type] = (byType[it.type] ?? 0) + 1;
+  const unplaced = (inbox.unplacedReport?.items ?? []).filter((u) => trongPhamVi(u.id ?? u.sectionId));
+
+  return {
+    ...inbox,
+    items,
+    byType,
+    total: items.length,
+    affectedSections: new Set(items.flatMap((i) => i.sectionIds)).size,
+    // "Chua co gio" gom theo dieu phoi vien nen dem lai theo cac lop con lai.
+    missingHoursCount: items
+      .filter((i) => i.type === PROBLEM_TYPE.MISSING_HOURS)
+      .reduce((n, i) => n + i.sectionIds.filter(trongPhamVi).length, 0),
+    unplacedReport: inbox.unplacedReport && { ...inbox.unplacedReport, items: unplaced },
+    daLoc: true,
+  };
+}
+
 export function buildProblemInbox(data, guestResult, residentResult = null, pendingMove = null) {
   if (!data) return { items: [], counts: {}, total: 0, byType: {} };
 
@@ -333,6 +382,79 @@ export function buildProblemInbox(data, guestResult, residentResult = null, pend
     items.push(item);
     if (!explainedBy.has(a.id)) explainedBy.set(a.id, id);
     if (!explainedBy.has(b.id)) explainedBy.set(b.id, id);
+  }
+
+  // --- 1c. GOM cac cap trung lap cua CUNG MOT NHOM lai thanh MOT muc ---
+  //
+  // Quet o tren lam theo TUNG CAP. Ba lop giong het nhau sinh ra ba cap
+  // (A-B, A-C, B-C) nen hop thu hien "SAS3021 ⟷ SAS3021" ba dong y het nhau -
+  // doc khong ra la co MAY lop trung, ma dem so van de cung phong len. Nhom ba
+  // dong do la MOT viec can lam: doi chieu file goc, xoa bot dong thua.
+  //
+  // Gom bang hop-nhom (union-find) tren sectionId thay vi gom theo khoa
+  // (GV + gio + mon): hai cap chung mot buoi thi CHAC CHAN cung mot nhom, khong
+  // phai doan bang cach dung khoa nao.
+  {
+    const cha = new Map();
+    const tim = (x) => {
+      while (cha.get(x) !== x) {
+        cha.set(x, cha.get(cha.get(x)));
+        x = cha.get(x);
+      }
+      return x;
+    };
+    const noi = (x, y) => {
+      for (const v of [x, y]) if (!cha.has(v)) cha.set(v, v);
+      const rx = tim(x), ry = tim(y);
+      if (rx !== ry) cha.set(rx, ry);
+    };
+    const capTrung = items.filter((it) => it.type === PROBLEM_TYPE.DUPLICATE);
+    for (const it of capTrung) noi(it.sectionIds[0], it.sectionIds[1]);
+
+    const theoNhom = new Map();
+    for (const it of capTrung) {
+      const goc = tim(it.sectionIds[0]);
+      if (!theoNhom.has(goc)) theoNhom.set(goc, []);
+      theoNhom.get(goc).push(it);
+    }
+
+    const gopLai = [];
+    for (const nhom of theoNhom.values()) {
+      if (nhom.length === 1) {
+        gopLai.push(nhom[0]);
+        continue;
+      }
+      const dau = nhom[0];
+      // Giu thu tu on dinh theo sectionId de nhan/id khong nhay moi lan giai lai.
+      const ids = [...new Set(nhom.flatMap((it) => it.sectionIds))].sort((a, b) => a - b);
+      const secs = [];
+      for (const it of nhom) {
+        for (const sec of it.sections) {
+          if (!secs.some((x) => (x.sectionId ?? x.id) === (sec.sectionId ?? sec.id))) secs.push(sec);
+        }
+      }
+      const ma = [...new Set(ids.map((id) => codeOf(id)))];
+      const item = {
+        ...dau,
+        id: `${PROBLEM_TYPE.DUPLICATE}:${ids.join("-")}`,
+        sectionIds: ids,
+        sections: secs,
+        // Cung mot ma lop lap N lan thi ghi "SAS3021 ×3" - "A ⟷ A ⟷ A" khong
+        // them thong tin gi ma con dai.
+        title: ma.length === 1 ? `${ma[0]} ×${ids.length}` : ma.join(" ⟷ "),
+        detail: `${dau.brief} — ${ids.length} dòng giống hệt nhau (cùng giảng viên, cùng mã lớp, cùng ${dau.when}): ${ma.join(", ")}.`,
+        coordinators: [...new Set(nhom.flatMap((it) => it.coordinators))],
+        sameCoordinator: nhom.every((it) => it.sameCoordinator),
+        crossProgram: nhom.some((it) => it.crossProgram),
+        soDongTrung: ids.length,
+      };
+      gopLai.push(item);
+      for (const id of ids) explainedBy.set(id, item.id);
+    }
+
+    const idGop = new Set(capTrung.map((it) => it.id));
+    items.splice(0, items.length,
+      ...items.filter((it) => !idGop.has(it.id)), ...gopLai);
   }
 
   // --- 2. Buoi CP-SAT khong xep duoc ---

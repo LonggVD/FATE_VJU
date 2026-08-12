@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { LayoutGrid, Maximize2, Minimize2, Map as MapIcon, Rows3, Save, TriangleAlert, X } from "lucide-react";
 import { useAppData } from "../../context/AppDataContext";
-import { buildProblemInbox } from "../../adapters/problemInbox";
+import { buildProblemInbox, filterProblemInbox } from "../../adapters/problemInbox";
 import { buildScheduleView, scopeLabel, SCOPE, DEFAULT_FILTER } from "../../adapters/scheduleView";
 import { analyzeSubmissions, teacherReportedHours } from "../../adapters/submissionQueue";
 import ReportedHoursPanel from "../teacher/ReportedHoursPanel";
@@ -95,6 +95,14 @@ export default function SchedulePage({ role, filter, onFilterChange }) {
     () => buildScheduleView({ data, guestResult, residentResult, inbox, filter: f }),
     [data, guestResult, residentResult, inbox, filter],
   );
+  // Hop thu hien tren man: DA LOC theo dung pham vi dang chon o luoi. `inbox`
+  // day du van duoc buildScheduleView dung (to mau buoi co van de) - loc ban do
+  // se lam buoi ngoai pham vi mat danh dau khi doi bo loc.
+  const inboxHien = useMemo(
+    () => filterProblemInbox(inbox, data, f),
+    [inbox, data, f.scope, f.scopeValue],
+  );
+
   const sq = useMemo(() => (data ? analyzeSubmissions(data) : null), [data]);
   const legend = useMemo(() => buildLegend(view.lessons, f.colorBy), [view.lessons, f.colorBy]);
 
@@ -285,7 +293,7 @@ export default function SchedulePage({ role, filter, onFilterChange }) {
 
   const inboxBlock = (
     <ProblemInbox
-      inbox={inbox}
+      inbox={inboxHien}
       activeId={activeProblem?.id ?? null}
       onPick={pickProblem}
       onClear={() => setActiveProblem(null)}
