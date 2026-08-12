@@ -1819,29 +1819,89 @@ textarea:focus-visible {
 
 
 /* ---- Chot lich theo HOC PHAN (o merge trong bang mirror) -------------------
-   O nay nam trong vung "hoc phan" (xls-z-course) va merge xuong ca nhom, nen
-   phai tu xuong dong duoc: mot mon co the co ca nguoi chot, ngay va ghi chu. */
-.xls-chot { min-width: 8.5rem; padding: 0.25rem 0.35rem; vertical-align: top; }
-.xls-chot-box { display: flex; flex-direction: column; align-items: flex-start; gap: 0.15rem; }
+   TRANG THAI ("Chot theo file"/"Da chot") nam duoi TEN HOC PHAN - chot ap cho ca
+   hoc phan nen do moi la cho doc no tu nhien. Cot "Chot lich" chi con MOT nut
+   icon.
+
+   Truoc day cot nay in san ca 4 thu (badge + nguoi chot + ngay + ghi chu + nut
+   "Bo chot") xep doc, lap lai o MOI hoc phan: rong ~8.5rem cung mot noi dung
+   gan nhu khong doi, trong khi bang co 29 cot va giao vu phai keo ngang de xem
+   thong tin lop. Chi tiet nay khong mat - vao tooltip cua badge (xem
+   nhanChot() ben ManualEntryPage.jsx). */
+/* ---- Be rong RIENG cho 4 cot vung "hoc phan" -------------------------------
+   Ca bon von an theo `.xls-table td.xls-course { min-width: 130px }` - mot con
+   so dat chung cho ca vung, nen cot "TT" (chi chua 1-3 chu so) va cot "So tin
+   chi" (1 chu so) cung rong 130px y nhu cot "Ten hoc phan". Do thuc te truoc khi
+   sua: TT 130 · Ma HP 130 · Ten HP 501 · So TC 130 = 891px, chiem gan het man
+   hinh trong khi bang co 29 cot va thong tin lop nam ben phai.
+
+   min-width PHAI dat lai (khong chi `width`): min-width luon thang width, de
+   nguyen 130px thi khai bao width nho hon khong co tac dung nao.
+
+   Rieng "Ten hoc phan" duoc XUONG DONG thay vi keo ngang: ten mon that rat dai
+   ("Tieng Nhat so cap 1 (Du kien chia lam 4 lop; thu 4 moi khung chia cho 2
+   lop...)"), cat ngang thi mat chu, ma keo rong thi day het cac cot khac ra
+   khoi man. O merge nay von da `white-space: normal` san. */
+.xls-table th.xls-c-tt,
+.xls-table td.xls-c-tt,
+.xls-table th.xls-c-tc,
+.xls-table td.xls-c-tc {
+  width: 3rem;
+  min-width: 0;
+  text-align: center;
+}
+.xls-table th.xls-c-ma,
+.xls-table td.xls-c-ma {
+  width: 5.5rem;
+  min-width: 0;
+}
+.xls-table th.xls-c-ten,
+.xls-table td.xls-c-ten {
+  width: 15rem;
+  min-width: 0;
+  max-width: 15rem;
+  /* Ten dai tu xuong dong. `overflow-wrap` de mot tu qua dai (ma lop dinh lien
+     ten) khong pha be rong cot. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Phai du specificity de thang `.xls-table td.xls-course { min-width: 130px }`:
+   o nay mang CA HAI class (no van la o merge cua vung hoc phan), va min-width
+   luon thang width. Khong go min-width thi cot ket o 130px du chi chua 1 icon. */
+.xls-table td.xls-chot,
+.xls-table thead th.xls-chot-head {
+  width: 2.6rem; min-width: 0; padding: 0.25rem 0.2rem;
+  vertical-align: middle; text-align: center;
+  white-space: normal;   /* "Chốt lịch" o tieu de tu xuong 2 dong cho vua */
+}
+/* Ten hoc phan + badge trang thai xep doc trong CUNG mot o merge. */
+.xls-course-ten { display: flex; flex-direction: column; align-items: flex-start; gap: 0.2rem; }
 .xls-chot-badge {
   display: inline-flex; align-items: center; gap: 0.25rem;
   border-radius: 0.3rem; padding: 0.05rem 0.3rem;
   background: color-mix(in srgb, var(--color-emerald-500, #10b981) 15%, transparent);
   color: #047857; font-weight: 600; white-space: nowrap;
+  font-size: 0.68rem;
 }
 .xls-chot-meta { color: var(--muted-foreground); font-size: 0.68rem; white-space: nowrap; }
-.xls-chot-note {
-  color: var(--muted-foreground); font-size: 0.68rem;
-  max-width: 9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 .xls-chot-btn {
-  display: inline-flex; align-items: center; gap: 0.25rem;
+  display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid var(--border); border-radius: 0.3rem;
-  padding: 0.1rem 0.35rem; background: var(--background);
-  font-size: 0.7rem; cursor: pointer; white-space: nowrap;
+  padding: 0.2rem; background: var(--background);
+  cursor: pointer; white-space: nowrap;
 }
 .xls-chot-btn:hover:not(:disabled) { background: var(--muted); }
 .xls-chot-btn:disabled { opacity: 0.5; cursor: default; }
+/* Nut BO CHOT (mon dang chot) khac nut CHOT: mot cai la mo khoa, mot cai la khoa
+   lai - hai huong nguoc nhau tren cung mot o nen phai phan biet duoc bang mau,
+   khong chi bang huong cua icon o kich thuoc 14px. Dat class tu JSX chu khong
+   do class noi bo cua lucide (`.lucide-lock-open`): ten do la chi tiet cai dat
+   cua thu vien, doi phien ban la vo am tham. */
+.xls-chot-btn.xls-chot-btn-mo {
+  border-color: color-mix(in srgb, #10b981 35%, var(--border));
+  color: #047857;
+}
 /* Ca vung hoc phan DA CHOT: nen xanh rat nhat, de luot mat la thay ngay mon nao
    xong - khong phai doc tung o "Chot lich". */
 tbody:has(.xls-chot-badge) .xls-course { background: color-mix(in srgb, #10b981 7%, transparent); }

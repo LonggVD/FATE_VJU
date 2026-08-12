@@ -53,6 +53,20 @@ function dayNumber(day) {
   return day === 6 ? "CN" : day + 2;
 }
 
+// Toan bo chi tiet chot lich, gop thanh MOT chuoi cho tooltip: ai chot, luc nao,
+// bao nhieu lop, ghi chu. Truoc day mo ra thanh 3 dong chu in san trong cot
+// "Chot lich" - lap lai o moi hoc phan va keo cot rong ra, trong khi bang da co
+// 29 cot. Nay trang thai chi con mot badge duoi ten mon, chi tiet nam o day.
+function nhanChot(chot) {
+  if (!chot) return "";
+  const luc = (chot.at || "").slice(0, 16).replace("T", " ");
+  return [
+    `${chot.tuFile ? "Chốt theo file" : "Đã chốt lịch"} bởi ${chot.by}${luc ? ` lúc ${luc}` : ""}`,
+    chot.soLop ? `${chot.soLop} lớp` : null,
+    chot.note || null,
+  ].filter(Boolean).join(" · ");
+}
+
 // Nhom cac lop (da loc/da cat trang) theo hoc phan, giu THU TU xuat hien -
 // dung de ve rowSpan cho 4 cot muc hoc phan (TT/Ma HP/Ten HP/So TC), tai tao
 // dung kieu "merge-xuong" cua file Excel goc (xem plan/backend _apply merge).
@@ -391,11 +405,11 @@ export default function ManualEntryPage({ role }) {
                 co them 4 o merge con dong sau khong, nen chi so cot lech nhau. */}
             <thead>
               <tr>
-                <th rowSpan={3} className="xls-z-course">TT</th>
-                <th rowSpan={3} className="xls-z-course">Mã học phần</th>
-                <th rowSpan={3} className="xls-z-course">Tên học phần</th>
-                <th rowSpan={3} className="xls-z-course">Số tín chỉ</th>
-                <th rowSpan={3} className="xls-z-course">Chốt lịch</th>
+                <th rowSpan={3} className="xls-z-course xls-c-tt">TT</th>
+                <th rowSpan={3} className="xls-z-course xls-c-ma">Mã học phần</th>
+                <th rowSpan={3} className="xls-z-course xls-c-ten">Tên học phần</th>
+                <th rowSpan={3} className="xls-z-course xls-c-tc">Số tín chỉ</th>
+                <th rowSpan={3} className="xls-z-course xls-chot-head">Chốt lịch</th>
                 <th rowSpan={3}>Mã lớp học phần</th>
                 <th colSpan={2}>Phân bổ TC</th>
                 <th rowSpan={3}>Khóa</th>
@@ -448,55 +462,61 @@ export default function ManualEntryPage({ role }) {
                 const meta = STATUS_META[c.status] || { label: c.status, tone: "slate" };
                 return (
                   <tr key={c.sectionId} className="sed-row xls-row" onClick={openSection(c.sectionId)}>
-                    {i === 0 && <td className="xls-course xls-z-course" rowSpan={g.rows.length} onClick={openCourse(g.courseId)}>{c.sectionId}</td>}
-                    {i === 0 && <td className="xls-course xls-z-course" rowSpan={g.rows.length} onClick={openCourse(g.courseId)}>{g.courseCode || "—"}</td>}
-                    {i === 0 && <td className="xls-course xls-z-course" rowSpan={g.rows.length} onClick={openCourse(g.courseId)}>{g.courseName || "—"}</td>}
-                    {i === 0 && <td className="xls-course xls-z-course" rowSpan={g.rows.length} onClick={openCourse(g.courseId)}>{g.credits ?? "—"}</td>}
-                    {/* CHOT LICH theo HOC PHAN: o merge xuong ca nhom, dung
-                        nhu Ma/Ten hoc phan - vi chot ap cho MOI lop cua mon,
-                        khong phai cho dong dang tro. */}
+                    {i === 0 && <td className="xls-course xls-z-course xls-c-tt" rowSpan={g.rows.length} onClick={openCourse(g.courseId)}>{c.sectionId}</td>}
+                    {i === 0 && <td className="xls-course xls-z-course xls-c-ma" rowSpan={g.rows.length} onClick={openCourse(g.courseId)}>{g.courseCode || "—"}</td>}
+                    {/* TRANG THAI da chot nam ngay DUOI TEN hoc phan, khong o cot
+                        rieng: chot ap cho ca hoc phan nen day moi la cho doc
+                        no tu nhien. Cot "Chot lich" ben canh chi con NUT.
+                        Chi tiet (nguoi chot, luc nao, ghi chu) vao tooltip -
+                        truoc day in het ra o rieng, lap lai o moi hoc phan va
+                        keo cot rong ra ~9rem trong khi bang da co 29 cot. */}
                     {i === 0 && (
-                      <td
-                        className="xls-course xls-z-course xls-chot"
-                        rowSpan={g.rows.length}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {g.chot ? (
-                          <div className="xls-chot-box">
-                            <span className="xls-chot-badge" title={
-                              `Đã chốt bởi ${g.chot.by} lúc ${(g.chot.at || "").replace("T", " ")}` +
-                              (g.chot.note ? ` — ${g.chot.note}` : "")
-                            }>
+                      <td className="xls-course xls-z-course xls-c-ten" rowSpan={g.rows.length} onClick={openCourse(g.courseId)}>
+                        {/* Bo trong DIV chu khong dat flex thang len <td>: mot o
+                            co rowSpan ma doi display khoi table-cell thi trinh
+                            duyet bo qua rowSpan -> vo toan bo layout merge. */}
+                        <div className="xls-course-ten">
+                          <span>{g.courseName || "—"}</span>
+                          {g.chot && (
+                            <span className="xls-chot-badge" title={nhanChot(g.chot)}>
                               <Lock className="size-3" />
                               {/* Chot TU FILE (moi lop deu co gio da thong nhat
                                   san - quy tac A2) khac chot TAY: giao vu can
                                   biet mon nao minh da thuc su ra soat. */}
                               {g.chot.tuFile ? "Chốt theo file" : "Đã chốt"}
                             </span>
-                            <span className="xls-chot-meta">
-                              {g.chot.by} · {(g.chot.at || "").slice(5, 10).split("-").reverse().join("/")}
-                            </span>
-                            {g.chot.note && <span className="xls-chot-note">{g.chot.note}</span>}
-                            {canEdit && (
-                              <button type="button" className="xls-chot-btn" onClick={handleBoChot(g)} disabled={loading}>
-                                <LockOpen className="size-3" />
-                                Bỏ chốt
-                              </button>
-                            )}
-                          </div>
-                        ) : canEdit && g.courseId != null ? (
+                          )}
+                        </div>
+                      </td>
+                    )}
+                    {i === 0 && <td className="xls-course xls-z-course xls-c-tc" rowSpan={g.rows.length} onClick={openCourse(g.courseId)}>{g.credits ?? "—"}</td>}
+                    {/* CHOT LICH theo HOC PHAN: o merge xuong ca nhom, dung
+                        nhu Ma/Ten hoc phan - vi chot ap cho MOI lop cua mon,
+                        khong phai cho dong dang tro.
+
+                        Cot nay chi con NUT (icon), trang thai da chuyen xuong
+                        duoi ten hoc phan - xem o "Ten hoc phan" ben tren. */}
+                    {i === 0 && (
+                      <td
+                        className="xls-course xls-z-course xls-chot"
+                        rowSpan={g.rows.length}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {canEdit && g.courseId != null ? (
                           <button
                             type="button"
-                            className="xls-chot-btn"
+                            className={g.chot ? "xls-chot-btn xls-chot-btn-mo" : "xls-chot-btn"}
                             disabled={loading}
-                            onClick={() => setChotGroup(g)}
-                            title="Ghi giờ đang hiển thị của mọi lớp trong học phần này thành giờ chính thức và ghim cứng"
+                            onClick={g.chot ? handleBoChot(g) : () => setChotGroup(g)}
+                            aria-label={g.chot ? "Bỏ chốt học phần" : "Chốt lịch học phần"}
+                            title={g.chot
+                              ? `Bỏ chốt để sửa lại giờ.\n${nhanChot(g.chot)}`
+                              : "Chốt lịch: ghi giờ đang hiển thị của mọi lớp trong học phần này thành giờ chính thức và ghim cứng"}
                           >
-                            <Lock className="size-3" />
-                            Chốt lịch
+                            {g.chot ? <LockOpen className="size-3.5" /> : <Lock className="size-3.5" />}
                           </button>
                         ) : (
-                          <span className="xls-chot-meta">chưa chốt</span>
+                          <span className="xls-chot-meta">{g.chot ? "đã chốt" : "—"}</span>
                         )}
                       </td>
                     )}
