@@ -2613,7 +2613,7 @@ def api_clear_override():
 
 @app.get("/api/manual/export")
 def api_manual_export():
-    """Xuat bang 'Du lieu hoc phan' hien co ra .xlsx dung khuon LAYOUTS['FATE']
+    """Xuat bang 'Du lieu hoc phan' hien co ra .xlsx dung khuon FATE chuan
     (fate_export.py) - de dung lam van ban chinh thuc va nap lai duoc o ky sau."""
     if STATE["data"] is None:
         return jsonify({"error": "Chưa có dữ liệu."}), 400

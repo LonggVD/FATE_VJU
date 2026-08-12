@@ -52,7 +52,9 @@ function formFromClass(c) {
 // data.classes). Tu goi useAppData() truc tiep (khong qua props tu trang cha) vi
 // day la 1 "man con" kha doc lap voi nhieu hanh dong rieng (them GV/hoc phan
 // nhanh, luu, xoa) - giam prop-drilling qua ManualEntryPage.
-export default function SectionEditDrawer({ data, section, onClose, onDuplicated }) {
+// onOpenTeacher: mo ngan cua MOT giang vien trong lop (de sua thong tin/khai gio
+// co the day) - trang cha giu state ngan nao dang mo nen phai di qua props.
+export default function SectionEditDrawer({ data, section, onClose, onDuplicated, onOpenTeacher }) {
   const { loading, addManualTeacher, addManualCourse, addManualSection, updateManualSection, deleteManualSection } = useAppData();
   const [form, setForm] = useState(section ? formFromClass(section) : emptyForm());
   const [error, setError] = useState(null);
