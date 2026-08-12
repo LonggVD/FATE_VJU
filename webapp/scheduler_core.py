@@ -654,23 +654,16 @@ def load_real_fate_data(xlsx_path, sheet_name=None, default_duration=2):
         }
 
         # --- Truong hop A: co gio ro rang ---
-        # Layout MOI: cot Thu/Tiet dau/Tiet cuoi la NGUON DUY NHAT (khong co text
-        # tu do nam nay de doi chieu) -> uu tien truc tiep.
-        # Layout CU: da xac minh qua kiem tra thuc te la cot text tu do
-        # "Thoi gian (Thu, Tiet)" DANG TIN CAY HON cot Thu/Tiet dau/cuoi (2 nguon
-        # nay hay LECH NHAU trong file goc) -> uu tien TEXT truoc, cot cau truc
-        # chi la du phong khi text khong doc duoc.
+        # NGUON GIO DUY NHAT la 3 cot Thu / Tiet dau / Tiet cuoi.
+        #
+        # Truoc day cot text tu do "Thoi gian (Thu, Tiet)" duoc uu tien HON (2 nguon
+        # hay lech nhau, do do tin text hon). Khoa da xac nhan cot text la CHO GHI CU
+        # cua cac ky truoc, du lieu bo di - nen bo han khoi moi duong doc. Dong nao
+        # khong co 3 cot nay thi coi nhu CHUA co gio, de thuat toan tu xep, chu khong
+        # quay ve doc text nua.
         thu, tiet_dau, tiet_cuoi = col(row, "thu"), col(row, "tiet_dau"), col(row, "tiet_cuoi")
         has_structured_time = all(isinstance(v, (int, float)) for v in (thu, tiet_dau, tiet_cuoi))
-        structured_sessions = [(int(thu) - 2, int(tiet_dau), int(tiet_cuoi))] if has_structured_time else []
-
-        sessions = []
-        if layout.get("time_text") is not None:
-            sessions, _ = _parse_time_text(col(row, "time_text"))
-            if not sessions:
-                sessions = structured_sessions  # du phong
-        else:
-            sessions = structured_sessions
+        sessions = [(int(thu) - 2, int(tiet_dau), int(tiet_cuoi))] if has_structured_time else []
 
         if sessions:
             for day, p_start, p_end in sessions:

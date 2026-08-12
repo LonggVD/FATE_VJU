@@ -1208,15 +1208,22 @@ _NHAN_LUU_Y = {
                       "như trong file (hoặc để trống) để gán sau",
     "thieu_ten_hoc_phan": "Dòng không có Tên học phần ở bất kỳ dòng nào phía trên — "
                           "đặt tạm tên theo mã lớp, sửa lại trong form",
-    "dong_giang": "Ô ghi nhiều giảng viên đồng giảng — chỉ lấy người đầu làm GV chính, "
-                  "những người còn lại cần thêm bằng tay",
+    "dong_giang": "Ô ghi nhiều giảng viên đồng giảng — TẤT CẢ đều được ràng buộc lịch cho "
+                  "lớp này (người đầu là GV chính để hiển thị); email/SĐT chia theo vị trí "
+                  "khi số lượng khớp số người, học hàm chỉ gán cho người đầu",
     "nhieu_buoi": "Dòng ghi nhiều buổi trong tuần — tách thành nhiều lớp cùng mã lớp",
     "gop_giang_vien": "Cùng một họ tên nhưng ghi nhiều đơn vị công tác khác nhau — "
                       "đã gộp làm một người và lấy đơn vị ghi đầu tiên",
-    "lech_nguon_gio": "2 nguồn giờ (cột text và cột Thứ/Tiết) ghi khác nhau — xem mục "
-                      "\"Xác nhận giờ học\" ở trên để chọn lại nguồn đúng cho từng lớp",
-    "vuot_quy_dinh_ngay": "Giờ trong file vượt quy định (thỉnh giảng tới Thứ 7, cơ hữu tới "
-                          "Thứ 6) — đã bỏ giờ cố định, chuyển \"để hệ thống tự xếp\", cần gán lại giờ",
+    "gop_bien_the_ten": "Cùng một người nhưng file ghi tên nhiều kiểu (có/không học hàm, "
+                        "khác dấu cách, có số thứ tự) — đã gộp làm một người; nên rà lại "
+                        "để chắc không phải hai người khác nhau",
+    "ngay_ngoai_quy_dinh_giu_nguyen": "Dạy Thứ 7/Chủ nhật, ngoài quy định (thỉnh giảng tới "
+                                      "Thứ 7, cơ hữu tới Thứ 6) — GIỮ NGUYÊN vì là giờ đã "
+                                      "chốt trong file, hệ thống không tự đổi",
+    "gio_ngoai_pham_vi_tiet": "Tiết trong file quá lớn, không thể là giờ học thật — đã bỏ giờ, "
+                              "chuyển \"để hệ thống tự xếp\" (lớp vẫn được nạp đủ)",
+    "noi_so_tiet": "File có giờ vượt số tiết/ngày mặc định — đã nới số tiết/ngày cho cả thời "
+                   "khoá biểu để giữ đúng giờ trong file",
 }
 
 
@@ -1243,32 +1250,15 @@ def _gom_theo_loai(items, nhan_map):
 
 
 def _build_import_preview_response(result, data, loi, canh_bao_gv, file_name):
-    """Dung chung cho preview VA apply-time-fix (ket qua sau khi giao vu doi lai
-    nguon gio 1 dong) - tranh 2 endpoint tu dung 2 cach tinh summary/warningGroups
-    ma lech nhau.
-
-    "lech_nguon_gio" duoc DUNG LAI tu result['timeReviews'] (co the vua doi
-    'chosen' o apply-time-fix) chu khong dung warnings tinh san luc doc file -
-    neu khong, chu canh bao se noi ve lua chon CU sau khi giao vu vua sua."""
+    """Gop ket qua doc file thanh BAN XEM TRUOC cho UI."""
     summary = fate_import.summarize(result)
     summary["soLopDungDuoc"] = len(data["sections"])
     summary["soGiangVien"] = len(data["teachers"])
     summary["soHocPhan"] = len(data["courses"])
 
-    other_warnings = [w for w in result["warnings"] if w.get("kind") != "lech_nguon_gio"]
-    lech_gio_warnings = [
-        {
-            "row": r["excelRow"], "kind": "lech_nguon_gio",
-            "detail": (
-                f"cột text: {r['textLabel']}; cột cấu trúc: {r['structuredLabel']} — đang dùng "
-                f"{'cột cấu trúc' if r['chosen'] == 'structured' else 'cột text'}"
-                + (" (đã tự phát hiện trùng lặp)" if r["certain"] else " (mặc định — cần xem lại)")
-            ),
-        }
-        for r in result["timeReviews"]
-    ]
-    all_warnings = other_warnings + lech_gio_warnings
+    all_warnings = result["warnings"]
     summary["soCanhBao"] = len(all_warnings) + len(canh_bao_gv)
+    data_issues = fate_audit.kiem_tra(result["rows"], data["teachers"])
 
     return {
         "fileName": file_name,
@@ -1278,12 +1268,12 @@ def _build_import_preview_response(result, data, loi, canh_bao_gv, file_name):
         # kieu bao nhieu dong.
         "skippedGroups": _gom_theo_loai(result["skipped"], _NHAN_BO_QUA),
         "warningGroups": _gom_theo_loai(all_warnings + canh_bao_gv, _NHAN_LUU_Y),
+        # LOI TRONG CHINH FILE (khac warningGroups - xem fate_audit): ma lop dung
+        # cho 2 hoc phan, ten khac dau thanh 2 hoc phan, mot email 2 nguoi, dong
+        # nhap trung... Import khong sai o dau ca, nhung du lieu ra khong dung y.
+        "dataIssues": data_issues,
+        "dataIssuesSummary": fate_audit.tom_tat(data_issues),
         "errors": loi[:20],
-        # "Buoc 1: chuan hoa du lieu" - moi dong 2 nguon gio lech nhau, giao vu
-        # xem/doi lai source truoc khi nap chinh thuc (buoc 2, xem
-        # api_manual_import_apply_time_fix). Sap certain=False (mo ho, can xem
-        # gap) len truoc de giao vu thay ngay viec can lam.
-        "timeReviews": sorted(result["timeReviews"], key=lambda r: r["certain"]),
         "sampleRows": [
             {
                 "excelRow": r["excelRow"], "courseCode": r["courseCode"],
@@ -1318,67 +1308,37 @@ def api_manual_import_preview():
         "data": data,
         "fileName": f.filename,
         "sheet": result["sheet"],
-        # Giu nguyen ban doc goc (rows/warnings/skipped/timeReviews) de
-        # apply-time-fix sua tren DUNG cac dong nay roi dung lai
-        # _build_manual_data_from_rows(), khong phai doc lai file.
+        # Giu nguyen ban doc goc (rows/warnings/skipped) de cac endpoint sau
+        # (vd tai loi du lieu ra .xlsx) dung lai, khong phai doc lai file.
         "result": result,
     }
 
     return jsonify(_build_import_preview_response(result, data, loi, canh_bao_gv, f.filename))
 
 
-@app.post("/api/manual/import/apply-time-fix")
-def api_manual_import_apply_time_fix():
-    """'Bước 1: chuẩn hoá dữ liệu' - giao vụ xem từng lớp bị 2 nguồn giờ (cột
-    text tự do / cột Thứ-Tiết đầu-Tiết cuối) ghi khác nhau
-    (STATE['import_pending']['result']['timeReviews']) và CHỌN lại nguồn đúng,
-    TRƯỚC khi nạp chính thức (bước 2: POST .../commit). Sửa trực tiếp trên bản
-    ghi dòng (result['rows']) rồi DÙNG LẠI _build_manual_data_from_rows() - giữ
-    đúng luật sinh sections/GV/học phần như lúc đọc file lần đầu, không viết
-    lại logic riêng."""
+@app.get("/api/manual/import/issues.xlsx")
+def api_manual_import_issues_xlsx():
+    """Tai danh sach loi du lieu cua ban xem truoc ra .xlsx - de gui khoa/CTDT sua
+    o FILE GOC (chi ho sua duoc; xem fate_audit). Doc-only, khong doi STATE."""
     pending = STATE.get("import_pending")
     if not pending or not pending.get("result"):
         return jsonify({"error": "Chưa có bản xem trước. Hãy tải file lên trước."}), 400
-
-    body = request.get_json(force=True)
-    try:
-        excel_row = int(body["excelRow"])
-    except (KeyError, TypeError, ValueError):
-        return jsonify({"error": "Thiếu hoặc sai excelRow."}), 400
-    source = body.get("source")
-    if source not in ("text", "structured"):
-        return jsonify({"error": "source phải là 'text' hoặc 'structured'."}), 400
-
-    result = pending["result"]
-    review = next((r for r in result["timeReviews"] if r["excelRow"] == excel_row), None)
-    if review is None:
-        return jsonify({"error": f"Không tìm thấy dòng cần sửa (excelRow={excel_row})."}), 400
-
-    review["chosen"] = source
-    chosen_time = review[source]
-    duration = chosen_time["periodEnd"] - chosen_time["periodStart"] + 1
-
-    matched = 0
-    for r in result["rows"]:
-        if r["excelRow"] == excel_row:
-            r["day"] = chosen_time["day"]
-            r["periodStart"] = chosen_time["periodStart"]
-            r["periodEnd"] = chosen_time["periodEnd"]
-            r["autoSchedule"] = False
-            r["duration"] = duration
-            matched += 1
-    if matched == 0:
-        return jsonify({"error": f"Không tìm thấy dòng dữ liệu tương ứng (excelRow={excel_row})."}), 400
-
-    data, loi, canh_bao_gv = _build_manual_data_from_rows(result["rows"])
-    pending["data"] = data
-
-    return jsonify(_build_import_preview_response(result, data, loi, canh_bao_gv, pending["fileName"]))
+    nhom = fate_audit.kiem_tra(pending["result"]["rows"], pending["data"]["teachers"])
+    buf = fate_export.build_issues_workbook(nhom, pending.get("fileName") or "")
+    ten = (pending.get("fileName") or "file").rsplit(".", 1)[0]
+    return send_file(
+        buf, as_attachment=True, download_name=f"Loi-du-lieu.{ten}.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 @app.post("/api/manual/import/commit")
 def api_manual_import_commit():
-    """Ghi ban xem truoc vao STATE - XOA HET du lieu dang co (da xac nhan o UI).
+    """Ghi ban xem truoc vao STATE. Body JSON tuy chon: {"mode": "replace"|"merge"}.
+
+    - "replace" (mac dinh, hanh vi cu): XOA HET du lieu dang co.
+    - "merge": GOP THEM vao du lieu dang co - de nap file cua khoa nay roi nap tiep
+      file cua khoa khac, hoac nap bo sung dot 2 ma khong mat cong da sua.
 
     Dat sourceLabel = "Nhap lieu thu cong" chu KHONG phai ten file: form
     "Du lieu hoc phan" chi mo khoa sua khi thay nhan do (xem isManualMode ben

@@ -16,53 +16,23 @@ endpoint nhap tay dung (_validate_section_body/_apply_section_time), de du lieu
 import ra khong khac gi du lieu go tay.
 """
 import re
+import unicodedata
 
 import openpyxl
 
-import scheduler_core as sc
-
-# Ban do COT -> truong cua form, cho tung dang file da gap.
-# Khoa dat trung ten field trong body JSON cua POST /api/manual/section, de app.py
-# chi viec chuyen tiep.
-#
-# Them dang moi thi them mot muc o day; cac cot khong co trong file thi de None
-# va se ra rong trong form (giao vu dien sau).
-LAYOUTS = {
-    # HK2 2025-2026 - cau truc CHUAN, dung tiep cho cac ky sau.
-    # Khong co cot "Hoc ham/vi" rieng (hoc ham nam san trong ho ten), cung khong
-    # co cot GV ky truoc de doi chieu.
-    "FATE": {
-        "header_row": 6,
-        "courseCode": 0, "courseName": 1, "credits": 2, "classCode": 3,
-        "ltCredits": 4, "thCredits": 5,
-        "cohort": 7, "program": 8, "expectedStudents": 9,
-        "timeText": None, "thu": 11, "tietDau": 12, "tietCuoi": 13,
-        "teacherTitle": None, "teacherName": 14, "teacherOrg": 15,
-        "teacherEmail": 16, "teacherPhone": 17,
-        "teachingHoursLt": 18, "teachingHoursTh": 19,
-        "location": 21, "teachingMode": 22, "language": 23,
-        "otherRequirements": 24, "notes": 25, "coordinatorOverride": None,
-        "prevTeacherName": None, "prevTeacherOrg": None,
-    },
-    # HK1 2026-2027 - cau truc CU. Day chinh la file ma bang 29 cot cua form
-    # dang mo phong, nen anh xa gan nhu 1:1.
-    "Giảng dạy cho FATE": {
-        "header_row": 8,
-        "courseCode": 1, "courseName": 2, "credits": 3, "classCode": 4,
-        "ltCredits": 5, "thCredits": 6,
-        "cohort": 7, "program": 8, "expectedStudents": 9,
-        "timeText": 10, "thu": 11, "tietDau": 12, "tietCuoi": 13,
-        "prevTeacherName": 14, "prevTeacherOrg": 15,
-        "teacherTitle": 16, "teacherName": 17, "teacherOrg": 18,
-        "teacherEmail": 19, "teacherPhone": 20,
-        "teachingHoursLt": 21, "teachingHoursTh": 22,
-        "location": 23, "teachingMode": 24, "language": 25,
-        "otherRequirements": 26, "notes": 27, "coordinatorOverride": 28,
-    },
-}
+# KHONG con import scheduler_core: cho duy nhat dung den no la _parse_time_text()
+# cho cot text tu do - cot do da bo han. Module nay gio doc Excel thuan tuy.
 
 # O ten GV co the ghi NHIEU nguoi dong giang, ngan boi dau phay HOAC xuong dong.
+# Chi dung cho o email/SDT; ten nguoi phai tach bang _split_names (ngoac).
 _NAME_SPLIT_RE = re.compile(r"[,\n]")
+
+# Ghi chu "(...)" dinh sau ten - cat bo de ban ghi GV sach VA de cung mot nguoi
+# ghi kem ghi chu khac nhau van gop lam mot: file that co "TS. Ta Quang Ngoc
+# (tro giang)" ben canh "TS. Ta Quang Ngoc", "TS. Hai (Thu 2 buoi sang va chieu)".
+# Khong cat thi mot nguoi tach lam hai va het phat hien duoc ho trung lich voi
+# chinh minh - dung cai gia ma cong cu nay ton tai de tim.
+_TEN_GHI_CHU_RE = re.compile(r"\s*\([^)]*\)\s*$")
 
 # Cac o "GV" thuc ra la ghi chu dieu phoi, khong phai mot con nguoi cu the:
 # "Phong Dao tao dieu phoi", "JLE dieu phoi"...
@@ -477,22 +447,26 @@ def _nums(v):
     return out
 
 
-def _text_sessions(row, layout, col):
-    """Buoi doc duoc tu cot text tu do (rong neu layout khong co cot nay hoac
-    khong parse duoc gi) - tach rieng khoi _structured_sessions() de so sanh
-    hai nguon truoc khi quyet dinh dung nguon nao (xem _group_time_overrides)."""
-    if layout.get("timeText") is None:
-        return []
-    try:
-        sessions, _ = sc._parse_time_text(col(row, "timeText"))
-    except Exception:
-        sessions = []
-    return sessions or []
+def _split_aligned(cell, n):
+    """Tach o co the ghi NHIEU gia tri (email/SDT cua dong dong giang, vd
+    "a@x, b@x, c@x" cho 3 nguoi) thanh DUNG n phan, theo vi tri.
+
+    Tra ve [] khi so phan khong bang n: luc do khong biet phan nao cua ai, doan
+    bua se gan email cua nguoi nay cho nguoi khac - tha de trong de giao vu dien.
+    """
+    parts = [p.strip() for p in _NAME_SPLIT_RE.split(cell or "") if p.strip()]
+    return parts if len(parts) == n else []
+
+
+def _phan(ds, k):
+    """Phan tu thu k, "" neu khong co - o file that so email thuong khong khop so
+    nguoi trong o ten."""
+    return ds[k] if ds and k < len(ds) else ""
 
 
 def _structured_sessions(row, layout, col):
     """Buoi doc duoc tu 3 cot Thu/Tiet dau/Tiet cuoi, ghep theo VI TRI (xem chi
-    thich chi tiet o _group_time_overrides/read_rows)."""
+    thich chi tiet o read_rows)."""
     thus = _nums(col(row, "thu"))
     tds = _nums(col(row, "tietDau"))
     tcs = _nums(col(row, "tietCuoi"))
@@ -561,13 +535,11 @@ def read_rows(source):
 
     ket_qua = {
       "sheet":       ten sheet da dung,
+      "columns":     ban do {ten_truong: cot Excel} da nhan dien tu hang tieu de
+                     (de doi chieu khi nghi ngo doc lech cot),
       "rows":        danh sach dong chuan hoa (moi dong = 1 LOP se tao trong form),
       "skipped":     danh sach {row, reason} - dong bi bo qua va vi sao,
       "warnings":    danh sach {row, message} - dong VAN nap nhung co diem can biet,
-      "timeReviews": danh sach lop co 2 nguon gio (text/cau truc) khac nhau -
-                     "buoc 1: chuan hoa du lieu" o UI, giao vu xem/doi chieu
-                     source dang dung TRUOC khi nap (buoc 2) - xem
-                     app.py: api_manual_import_apply_time_fix.
     }
 
     Mot dong Excel co the sinh ra NHIEU dong ket qua: khi o thoi gian ghi nhieu
@@ -595,20 +567,14 @@ def read_rows(source):
             return None
         return row[idx]
 
-    rows, skipped, warnings, time_reviews = [], [], [], []
+    rows, skipped, warnings = [], [], []
     # Excel gop o theo chieu doc cho cac cot muc hoc phan -> dong sau de trong,
     # phai nho lai gia tri dong truoc (dung cach load_real_fate_data lam).
     carry = {"courseCode": None, "courseName": None, "credits": None,
              "classCode": None, "ltCredits": None, "thCredits": None}
 
-    # Xem truoc ca file 1 luot (chi de nhom hoc phan + so sanh 2 nguon gio) -
-    # PHAI lam TRUOC vong chinh vi can biet ca cac dong "anh em" phia sau moi
-    # nhom moi ket luan duoc nguon nao dang tin (xem _group_time_overrides).
-    group_ids = _course_group_ids(raw_rows, col)
-    time_overrides = _group_time_overrides(raw_rows, layout, col, group_ids)
-
     for i, row in enumerate(raw_rows):
-        excel_row = i + layout["header_row"]
+        excel_row = i + first_data_row
 
         # Doi TEN hoc phan -> CAT ke thua truoc khi doc dong nay.
         #
@@ -681,59 +647,38 @@ def read_rows(source):
                 "detail": f"{len(names)} người: {', '.join(names)}"[:90],
             })
 
+        # O email/SDT cua dong dong giang ghi nhieu gia tri, khop THEO VI TRI voi
+        # danh sach ten. Chi tach khi so luong khop het - xem _split_aligned.
+        email_cell = _text(col(row, "teacherEmail"))
+        phone_cell = _text(col(row, "teacherPhone"))
+        emails = _split_aligned(email_cell, len(names)) if len(names) > 1 else []
+        phones = _split_aligned(phone_cell, len(names)) if len(names) > 1 else []
+        # DON VI cung phai tach theo vi tri nhu email/SDT. Truoc day KHONG tach:
+        # ca nhom nhan nguyen chuoi, ma phan loai co huu/thinh giang doc chinh
+        # chuoi do ("Viet Nhat" -> co huu). Dong 243 file HK1-2 ghi
+        #   Ho ten: Gota Morota, Hiroyoshi Iwata, Ta Kim Nhung
+        #   Don vi: Truong DH Tokyo / Truong DH Tokyo / Truong DH Viet Nhat
+        # -> ca ba nhan chuoi co chu "Viet Nhat" nen HAI khach moi DH Tokyo bi
+        # xep co huu, roi xuong Giai doan 2 (he thong tu do chon gio cho ho).
+        org_cell = _text(col(row, "teacherOrg"))
+        orgs = _split_aligned(org_cell, len(names)) if len(names) > 1 else []
+
         # --- Thoi gian ---
-        # Layout CU co cot text tu do va da duoc xac minh la DANG TIN HON cot
-        # Thu/Tiet (hai nguon nay hay lech nhau trong file goc) -> uu tien text
-        # theo MAC DINH khi khong co dau hieu nao khac. Ghep 3 cot Thu / Tiet
-        # dau / Tiet cuoi theo VI TRI: gia tri thu k cua moi cot thuoc cung mot
-        # buoi. Rieng cot Thu hay chi ghi MOT lan roi dung cho ca hai buoi (vd
-        # Thu='2', Tiet dau='2\n6') - luc do lay gia tri cuoi cung da doc duoc.
-        text_sessions = _text_sessions(row, layout, col)
-        structured = _structured_sessions(row, layout, col)
+        # CHI LAY COT CAU TRUC (Thu / Tiet dau / Tiet cuoi). Cot text tu do
+        # "Thoi gian (Thu, Tiet)" la CHO GHI CU cua cac ky truoc, khoa xac nhan la
+        # DU LIEU LOI - khong dung lam nguon gio nua, ke ca khi dong do khong co
+        # cot cau truc (luc do lop coi nhu chua co gio, de thuat toan tu xep).
+        #
+        # Ban dau uu tien nguoc lai (text truoc) kem mot co che TU DOAN: neu trong
+        # cung mot hoc phan, mot nguon giu Y NGUYEN gia tri cho moi lop con nguon
+        # kia phan biet tung lop, thi dao uu tien cho nhom do. Bo het - khoa da chot
+        # cot nao dung, khong can he thong doan nua.
+        #
+        # Ghep 3 cot Thu / Tiet dau / Tiet cuoi theo VI TRI: gia tri thu k cua moi
+        # cot thuoc cung mot buoi. Rieng cot Thu hay chi ghi MOT lan roi dung cho
+        # ca hai buoi (vd Thu='2', Tiet dau='2\n6') - lay gia tri cuoi cung da doc.
+        sessions = _hop_le(_structured_sessions(row, layout, col))
 
-        # Nhom hoc phan nay co dau hieu 1 trong 2 cot bi "quen sua" khi copy
-        # dong tao lop thu 2 (xem _group_time_overrides) -> DAO nguoc uu tien
-        # cho DUNG cac dong lien quan, danh dau certain=True (he thong CHAC).
-        # Cac dong lech khac (khong co dau hieu ro) van duoc dua vao
-        # time_reviews (certain=False, van dung MAC DINH cu) - giao vu XEM va
-        # SUA truoc khi nap, thay vi am tham tin 1 ben nhu ban dau.
-        override = time_overrides.get(group_ids[i])
-        chosen_source = override or ("text" if text_sessions else "structured")
-
-        # CHI xet lech khi CA HAI nguon co DUNG 1 buoi (bo qua truong hop nhieu
-        # buoi/o - hiem va phuc tap hoa man xem lai khong dang) VA hai gia tri
-        # THUC SU khac nhau.
-        if len(text_sessions) == 1 and len(structured) == 1 and text_sessions[0] != structured[0]:
-            time_reviews.append({
-                "excelRow": excel_row,
-                "classCode": carry["classCode"] or "",
-                "courseName": carry["courseName"],
-                "teacherName": names[0],
-                "chosen": chosen_source,
-                "certain": override is not None,
-                "text": {"day": text_sessions[0][0], "periodStart": text_sessions[0][1], "periodEnd": text_sessions[0][2]},
-                "structured": {"day": structured[0][0], "periodStart": structured[0][1], "periodEnd": structured[0][2]},
-                "textLabel": _session_label(text_sessions[0]),
-                "structuredLabel": _session_label(structured[0]),
-            })
-            warnings.append({
-                "row": excel_row, "kind": "lech_nguon_gio",
-                "detail": (
-                    f"2 nguồn giờ khác nhau — cột text: {_session_label(text_sessions[0])}; "
-                    f"cột cấu trúc: {_session_label(structured[0])}. Đang dùng "
-                    f"{'cột cấu trúc' if chosen_source == 'structured' else 'cột text'}"
-                    + (" (đã tự phát hiện trùng lặp)" if override is not None else " (mặc định — cần xem lại ở bước xem trước)")
-                ),
-            })
-
-        if chosen_source == "structured" and structured:
-            sessions = structured
-        elif text_sessions:
-            sessions = text_sessions
-        else:
-            sessions = structured
-
-        sessions = [s for s in sessions if 0 <= s[0] <= 6 and s[1] >= 1 and s[2] >= s[1]]
         if not sessions:
             sessions = [(None, None, None)]  # chua co gio -> de thuat toan tu xep
         elif len(sessions) > 1:
@@ -807,8 +752,12 @@ def read_rows(source):
             })
 
     return {
-        "sheet": sheet_name, "rows": rows, "skipped": skipped, "warnings": warnings,
-        "timeReviews": time_reviews,
+        "sheet": sheet_name,
+        "columns": {
+            f: openpyxl.utils.get_column_letter(layout[f] + 1)
+            for f in FIELDS if layout.get(f) is not None
+        },
+        "rows": rows, "skipped": skipped, "warnings": warnings,
     }, None
 
 
