@@ -667,6 +667,40 @@ select:focus-visible {
   pointer-events: none;
 }
 
+/* Nut TACH NHOM trong popup - nam ngay duoi danh sach cac lop cung buoi. */
+.tt-hc-btn {
+  margin-top: 4px;
+  width: 100%;
+  border: 1px solid color-mix(in srgb, #7e22ce 35%, transparent);
+  border-radius: 5px;
+  background: var(--paper);
+  color: #6b21a8;
+  padding: 3px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tt-hc-btn:hover { background: color-mix(in srgb, #7e22ce 10%, transparent); }
+
+/* Badge HOC CHUNG trong bang 29 cot - bam duoc de tach nhom. */
+.xls-hc-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  margin-left: 0.3rem;
+  border: 1px solid color-mix(in srgb, #7e22ce 30%, transparent);
+  border-radius: 0.3rem;
+  padding: 0 0.25rem;
+  background: color-mix(in srgb, #7e22ce 10%, transparent);
+  color: #6b21a8;
+  font-size: 0.66rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.xls-hc-badge:hover:not(:disabled) { background: color-mix(in srgb, #7e22ce 20%, transparent); }
+.xls-hc-badge:disabled { cursor: default; opacity: 0.75; }
+
 /* Nhan gon tren THE (khong gian rat hep - chi mot dau "×N"). */
 .lb-hc {
   background: #7e22ce;

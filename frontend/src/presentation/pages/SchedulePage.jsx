@@ -1,28 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
-import { LayoutGrid, Maximize2, Minimize2, Map as MapIcon, Rows3, Save, TriangleAlert, X } from "lucide-react";
+import { Map as MapIcon, TriangleAlert, X } from "lucide-react";
 import { useAppData } from "../../context/AppDataContext";
 import { buildProblemInbox, filterProblemInbox } from "../../adapters/problemInbox";
 import { buildScheduleView, scopeLabel, SCOPE, DEFAULT_FILTER } from "../../adapters/scheduleView";
-import { analyzeSubmissions, teacherReportedHours } from "../../adapters/submissionQueue";
+import { teacherReportedHours } from "../../adapters/submissionQueue";
+import { buildSteps } from "../../adapters/buocGiai";
 import ReportedHoursPanel from "../teacher/ReportedHoursPanel";
-import { COLOR_BY_OPTIONS, STATUS_COLORS, buildLegend } from "../../adapters/colorGrouping";
+import { STATUS_COLORS, buildLegend } from "../../adapters/colorGrouping";
 import LessonGridBoard from "../timetable/LessonGridBoard";
 import LessonTable from "../timetable/LessonTable";
 import ProblemInbox from "../schedule/ProblemInbox";
 import DensityNavigator from "../schedule/DensityNavigator";
 import WorkflowStrip from "../schedule/WorkflowStrip";
+import ScheduleToolbar from "../schedule/ScheduleToolbar";
 import MoveReasonDialog from "../schedule/MoveReasonDialog";
 import SaveMoveDialog from "../schedule/SaveMoveDialog";
 import PendingMoveBanner from "../schedule/PendingMoveBanner";
 import { slotRangeLabel } from "../../adapters/crossConflictAnalysis";
 import SolverProgress from "../SolverProgress";
-import { FilterSelect } from "@/components/shared/filter-select";
-import { ListSearch } from "@/components/shared/list-search";
 import { Notice } from "@/components/shared/notice";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
-import { NativeSelect } from "@/components/ui/native-select";
 import { cn } from "@/lib/utils";
 
 // MAN TRUNG TAM sau refactor - gop Giai doan 1, Giai doan 2, Tra cuu theo giang
@@ -31,10 +28,15 @@ import { cn } from "@/lib/utils";
 // Ca bon von la CUNG MOT luoi tuan voi bo loc khac nhau; cai khac nhau that su
 // chi la pham vi du lieu va nut bam. Nay dung la nhu vay: mot luoi, mot thanh
 // loc, mot hop thu van de, mot thanh tien trinh giu lai rang buoc GD2-sau-GD1.
+//
+// File nay giu TRANG THAI va lap ghep; hai manh tach ra rieng vi tu chung duoc:
+//   adapters/buocGiai.js       luat 3 buoc cua thanh tien trinh
+//   schedule/ScheduleToolbar   thanh loc + cac nut hanh dong
 export default function SchedulePage({ role, filter, onFilterChange }) {
   const {
     data, guestResult, residentResult, loading, error, solveGuest, solveResident,
-    doMoveLesson, doClearOverride, doSaveSchedule, doHocChung,
+    doMoveLesson, doClearOverride, doSaveSchedule, doHocChung, doBoHocChung, doHoanTac,
+    gd2HetHieuLuc,
   } = useAppData();
   const [activeProblem, setActiveProblem] = useState(null);
   // Buoi can cuon toi tren luoi - { id, seq }; xem pickProblem.
@@ -103,7 +105,6 @@ export default function SchedulePage({ role, filter, onFilterChange }) {
     [inbox, data, f.scope, f.scopeValue],
   );
 
-  const sq = useMemo(() => (data ? analyzeSubmissions(data) : null), [data]);
   const legend = useMemo(() => buildLegend(view.lessons, f.colorBy), [view.lessons, f.colorBy]);
 
   // Phu 1 lop hien thi len tren view.lessons: buoi dang pendingMove (chua luu)
@@ -137,6 +138,13 @@ export default function SchedulePage({ role, filter, onFilterChange }) {
     [data, teacherId],
   );
 
+  // Phai o TREN nhanh thoat "chua co du lieu" ben duoi - hook chay co dieu kien
+  // la vi pham rules of hooks.
+  const steps = useMemo(
+    () => buildSteps({ data, guestResult, residentResult, gd2HetHieuLuc, solveGuest, solveResident }),
+    [data, guestResult, residentResult, gd2HetHieuLuc, solveGuest, solveResident],
+  );
+
   if (!data) {
     return (
       <Notice tone="slate">
@@ -154,44 +162,6 @@ export default function SchedulePage({ role, filter, onFilterChange }) {
       ? view.idsAt[activeCell.day]?.[activeCell.period] ?? []
       : [],
   );
-
-  const steps = [
-    {
-      key: "collect",
-      label: "Thu giờ",
-      value: sq ? `${sq.doneCount}/${sq.guestCount}` : "—",
-      state: sq && sq.queue.length === 0 ? "done" : "todo",
-    },
-    // guestResult/residentResult co the la LICH BAN DAU doc tu file (initial),
-    // chua phai ket qua giai - thanh tien trinh phai noi ro, khong thi nap file
-    // xong buoc 2/3 hien "done" ma chua ai bam Giai.
-    {
-      key: "guest",
-      label: "Xếp thỉnh giảng",
-      value: !guestResult
-        ? "chưa chạy"
-        : guestResult.initial
-          ? `${guestResult.placedCount} buổi chốt từ file`
-          : `${guestResult.placedCount}/${guestResult.total}`,
-      state: guestResult && !guestResult.initial ? "done" : "todo",
-      action: solveGuest,
-      actionLabel: guestResult && !guestResult.initial ? "Giải lại" : "Giải",
-    },
-    {
-      key: "resident",
-      label: "Ghép cơ hữu",
-      value: !residentResult
-        ? "chưa chạy"
-        : residentResult.initial
-          ? `${residentResult.placedCount} buổi chốt từ file`
-          : `${residentResult.placedCount}/${residentResult.total}`,
-      state: residentResult && !residentResult.initial ? "done" : "todo",
-      action: solveResident,
-      actionLabel: residentResult && !residentResult.initial ? "Giải lại" : "Giải",
-      // Lich ban dau khong tinh la "da chay Giai doan 1" (backend cung chan).
-      disabled: !guestResult || guestResult.initial,
-    },
-  ];
 
   const pickProblem = (item) => {
     setActiveProblem(item);
@@ -330,165 +300,22 @@ export default function SchedulePage({ role, filter, onFilterChange }) {
         </Notice>
       )}
 
-      {/* ===== Thanh loc ===== */}
-      <div className="bg-card flex flex-wrap items-center gap-2 rounded-xl border p-3 shadow-sm">
-        <div className="flex items-center gap-2">
-          <Label htmlFor="sv-scope" className="text-muted-foreground text-xs">
-            Xem
-          </Label>
-          <NativeSelect
-            id="sv-scope"
-            value={f.scope}
-            onChange={(e) => set({ scope: e.target.value, scopeValue: "" })}
-          >
-            <option value={SCOPE.ALL}>Toàn khoa</option>
-            <option value={SCOPE.PROGRAM}>Theo chương trình</option>
-            <option value={SCOPE.COHORT}>Theo khoá</option>
-            <option value={SCOPE.TEACHER}>Theo giảng viên</option>
-          </NativeSelect>
-        </div>
-
-        {/* Hai danh sach nay dai (19 chuong trinh, hang chuc GV) nen dung
-            FilterSelect co o tim; scopeValue rong = khong loc, dung bang nghia
-            "Tat ca" ma FilterSelect hien cho value===null. */}
-        {f.scope === SCOPE.PROGRAM && (
-          <FilterSelect
-            label="Tất cả chương trình"
-            searchable
-            value={f.scopeValue || null}
-            options={view.programs}
-            onChange={(v) => set({ scopeValue: v ?? "" })}
-          />
-        )}
-
-        {/* Khoa (cot "Khóa" cua bang du lieu hoc phan, vd VJU2026) - in TKB cho
-            mot khoa la viec thuong lam, truoc day phai loc tay tung chuong trinh. */}
-        {f.scope === SCOPE.COHORT && (
-          <FilterSelect
-            label="Tất cả khoá"
-            searchable
-            value={f.scopeValue || null}
-            options={view.cohorts}
-            onChange={(v) => set({ scopeValue: v ?? "" })}
-          />
-        )}
-
-        {f.scope === SCOPE.TEACHER && (
-          <FilterSelect
-            label="Tất cả giảng viên"
-            searchable
-            value={f.scopeValue ? String(f.scopeValue) : null}
-            options={view.teachers.map((t) => ({ value: String(t.id), label: t.name }))}
-            onChange={(v) => set({ scopeValue: v ?? "" })}
-          />
-        )}
-
-        <div className="flex items-center gap-3">
-          <span className="text-muted-foreground text-xs">Lớp</span>
-          <Label htmlFor="sv-guest" className="text-sm font-normal">
-            <Checkbox
-              id="sv-guest"
-              checked={f.guest}
-              onCheckedChange={(v) => set({ guest: v === true })}
-            />
-            Thỉnh giảng
-          </Label>
-          <Label htmlFor="sv-resident" className="text-sm font-normal">
-            <Checkbox
-              id="sv-resident"
-              checked={f.resident}
-              onCheckedChange={(v) => set({ resident: v === true })}
-            />
-            Cơ hữu
-          </Label>
-        </div>
-
-        <ListSearch
-          value={f.search}
-          onChange={(v) => set({ search: v })}
-          placeholder="Tìm môn, giảng viên, #id"
-          className="w-full sm:w-64"
-        />
-
-        <Label htmlFor="sv-problems" className="text-sm font-normal">
-          <Checkbox
-            id="sv-problems"
-            checked={f.onlyProblems}
-            onCheckedChange={(v) => set({ onlyProblems: v === true })}
-          />
-          Chỉ buổi có vấn đề
-        </Label>
-
-        {mode === "grid" && (
-          <NativeSelect
-            value={f.colorBy}
-            onChange={(e) => set({ colorBy: e.target.value })}
-          >
-            {COLOR_BY_OPTIONS.map((o) => (
-              <option key={o.key} value={o.key}>Tô màu: {o.label}</option>
-            ))}
-          </NativeSelect>
-        )}
-
-        <div className="ml-auto flex items-center gap-2">
-          {canEdit && (guestResult || residentResult) && (
-            <Button
-              size="sm"
-              disabled={loading}
-              onClick={() => {
-                if (window.confirm(
-                  "Ghi đè Thứ, Tiết bắt đầu/kết thúc và Trạng thái của TOÀN BỘ lớp đang xếp vào Dữ liệu học phần?",
-                )) {
-                  doSaveSchedule();
-                }
-              }}
-              title="Cập nhật Thứ, Tiết bắt đầu/kết thúc và trạng thái vào Dữ liệu học phần"
-            >
-              <Save className="size-4" />
-              Lưu thời khoá biểu
-            </Button>
-          )}
-          {/* Bo chuyen che do dang segmented - cung ngon ngu voi TabsList. */}
-          <div className="bg-muted inline-flex h-9 items-center rounded-lg p-0.75">
-            {[
-              { key: "grid", label: "Lưới", icon: LayoutGrid },
-              { key: "table", label: "Bảng", icon: Rows3 },
-            ].map((m) => (
-              <button
-                key={m.key}
-                type="button"
-                onClick={() => setMode(m.key)}
-                aria-pressed={mode === m.key}
-                className={cn(
-                  "inline-flex h-full items-center gap-1.5 rounded-md px-2.5 text-sm font-medium transition-colors",
-                  mode === m.key
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                <m.icon className="size-4" />
-                {m.label}
-              </button>
-            ))}
-          </div>
-
-          {mode === "grid" && (
-            <Button
-              variant={fullscreen ? "default" : "outline"}
-              size="sm"
-              onClick={() => setFullscreen(!fullscreen)}
-              title={
-                canEdit
-                  ? "Toàn màn hình — thẻ hiện đủ thông tin, kéo-thả được để sửa tay"
-                  : "Toàn màn hình — thẻ hiện đủ mã lớp, môn, giảng viên, phòng"
-              }
-            >
-              {fullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
-              {fullscreen ? "Thoát" : "Toàn màn hình"}
-            </Button>
-          )}
-        </div>
-      </div>
+      <ScheduleToolbar
+        f={f}
+        set={set}
+        view={view}
+        data={data}
+        canEdit={canEdit}
+        loading={loading}
+        guestResult={guestResult}
+        residentResult={residentResult}
+        mode={mode}
+        onModeChange={setMode}
+        fullscreen={fullscreen}
+        onFullscreenChange={setFullscreen}
+        onSaveSchedule={doSaveSchedule}
+        onHoanTac={doHoanTac}
+      />
 
       <div className="text-muted-foreground flex flex-wrap items-baseline gap-x-3 gap-y-1 px-0.5 text-xs">
         <strong className="text-foreground text-[13px]">{scopeLabel(view, data)}</strong>
@@ -582,6 +409,7 @@ export default function SchedulePage({ role, filter, onFilterChange }) {
                   // khong mat du lieu) thay vi bi khoa.
                   onMoveLesson={canEdit ? handleDropLesson : undefined}
                   onClearOverride={canEdit ? doClearOverride : undefined}
+                  onTachHocChung={canEdit ? doBoHocChung : undefined}
                 />
               </>
             ) : (
