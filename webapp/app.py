@@ -233,9 +233,17 @@ def _build_data_response(data, extra=None):
             "nameRaw": t.get("name"), "title": t.get("title"), "email": t.get("email"), "phone": t.get("phone"),
             "availabilitySlots": sorted(manual_windows.get(t["id"], [])),
             "availabilityWindows": [sc.slot_label(s, params["slotsPerDay"]) for s in sorted(manual_windows.get(t["id"], []))],
+            # O gio nguoi nay DANG DAY theo cac lop da chot gio (xem dang_day o
+            # tren) - de hien tren luoi "Gio co the day" nhu bang chung, khong
+            # phai gio da khai.
+            "teachingSlots": sorted(dang_day.get(t["id"], [])),
             # True = cho trong cho lop CHUA phan cong giang vien (nap tu Excel),
             # khong phai mot con nguoi. Cac man danh cho GV that loc bang co nay.
             "isPlaceholder": bool(t.get("placeholder")),
+            # None = chua nap danh sach co huu (dang doan theo o "Don vi cong
+            # tac"); True/False = co/khong co ten trong danh sach chinh thuc.
+            "inLecturerList": (None if t.get("placeholder")
+                               else _co_huu_theo_danh_sach(t.get("name"))),
         }
         for t in sorted(data["teachers"].values(), key=lambda t: t["id"])
     ]
@@ -683,7 +691,8 @@ def _save_snapshot():
     snapshot = {**STATE["data"], "forced_conflict_teacher_ids": sorted(STATE["data"].get("forced_conflict_teacher_ids") or [])}
     try:
         with open(_SNAPSHOT_PATH, "w", encoding="utf-8") as f:
-            json.dump({"data": snapshot, "extra": STATE.get("extra")}, f, ensure_ascii=False)
+            json.dump({"data": snapshot, "extra": STATE.get("extra"),
+                       "coHuu": STATE.get("co_huu")}, f, ensure_ascii=False)
     except OSError:
         pass
 
@@ -699,6 +708,9 @@ def _load_snapshot():
             snap = json.load(f)
     except (OSError, json.JSONDecodeError):
         return
+    # Nap danh sach co huu TRUOC data: _dat_lich_ban_dau() o cuoi ham doc
+    # teacher_type, ma phan loai do phu thuoc danh sach nay.
+    STATE["co_huu"] = snap.get("coHuu")
     data = snap.get("data")
     if not data:
         return
@@ -1507,8 +1519,11 @@ def _build_manual_data_from_rows(rows):
         if r.get("chuaPhanCong"):
             tid = len(data["teachers"])
             data["teachers"][tid] = {
+                # CHO TRONG, khong phai mot con nguoi -> danh sach GV co huu
+                # khong the noi gi ve no. Phan loai theo o "Don vi cong tac" nhu
+                # cu; giao vu gan GV that thi lop tinh lai theo nguoi do.
                 "id": tid, "name": r["teacherName"] or "(Chưa phân công)",
-                "type": "RESIDENT" if ("việt nhật" in org.lower() or "viet nhat" in org.lower()) else "GUEST",
+                "type": _loai_gv(org),
                 "org": org, "title": r["teacherTitle"],
                 "email": r["teacherEmail"], "phone": r["teacherPhone"],
                 "placeholder": True,

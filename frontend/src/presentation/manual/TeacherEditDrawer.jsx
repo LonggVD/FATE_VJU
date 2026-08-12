@@ -31,7 +31,7 @@ function formFromTeacher(t) {
 // co id de gan gio ranh (phai tao xong GV truoc), va SubmissionWindowGrid von
 // da co san nut luu rieng, tai dung nguyen khong sua de khong dong den 1
 // component dang dung o man "Khung gio da bao".
-export default function TeacherEditDrawer({ data, teacher, onClose }) {
+export default function TeacherEditDrawer({ data, teacher, classes = [], onClose }) {
   const { loading, addManualTeacher, updateManualTeacher } = useAppData();
   const [teacherId, setTeacherId] = useState(teacher?.id ?? null);
   const [form, setForm] = useState(teacher ? formFromTeacher(teacher) : emptyForm());
@@ -140,18 +140,35 @@ export default function TeacherEditDrawer({ data, teacher, onClose }) {
             </FormRow>
             <FormRow label="Loại giảng viên">
               {(id) => (
-                <NativeSelect
-                  id={id}
-                  className="w-full"
-                  value={form.teacherType}
-                  onChange={(e) => {
-                    setTypeTouched(true);
-                    setForm((f) => ({ ...f, teacherType: e.target.value }));
-                  }}
-                >
-                  <option value="GUEST">Thỉnh giảng</option>
-                  <option value="RESIDENT">Cơ hữu</option>
-                </NativeSelect>
+                <>
+                  <NativeSelect
+                    id={id}
+                    className="w-full"
+                    value={form.teacherType}
+                    onChange={(e) => {
+                      setTypeTouched(true);
+                      setForm((f) => ({ ...f, teacherType: e.target.value }));
+                    }}
+                  >
+                    <option value="GUEST">Thỉnh giảng</option>
+                    <option value="RESIDENT">Cơ hữu</option>
+                  </NativeSelect>
+                  {/* Danh sach co huu la NGUON CHINH THUC: nap lai file danh sach
+                      se ghi de lua chon tay o day. Noi truoc, khong de nguoi dung
+                      sua roi thay no tu quay lai. */}
+                  {teacher?.inLecturerList === false && form.teacherType === "RESIDENT" && (
+                    <p className="text-muted-foreground mt-1 text-xs">
+                      Người này <strong>không có trong danh sách cơ hữu</strong> — nạp lại danh sách
+                      sẽ chuyển họ về thỉnh giảng. Nên bổ sung vào file danh sách.
+                    </p>
+                  )}
+                  {teacher?.inLecturerList === true && form.teacherType === "GUEST" && (
+                    <p className="text-muted-foreground mt-1 text-xs">
+                      Người này <strong>có trong danh sách cơ hữu</strong> — nạp lại danh sách sẽ
+                      chuyển họ về cơ hữu.
+                    </p>
+                  )}
+                </>
               )}
             </FormRow>
             <FormRow label="Email">
@@ -206,9 +223,40 @@ export default function TeacherEditDrawer({ data, teacher, onClose }) {
           </DrawerSection>
         )}
 
+        {/* CAC LOP KY NAY - de sua thong tin GV ma van thay ngay ho dang day gi,
+            khong phai mo bang lop o man khac roi loc tay. */}
+        {teacherId != null && classes.length > 0 && (
+          <DrawerSection
+            title={`Lớp kỳ này (${classes.length})`}
+            hint="Các lớp giảng viên này đang dạy, kể cả lớp đồng giảng với người khác."
+          >
+            <div className="max-h-64 space-y-1 overflow-y-auto text-xs">
+              {classes.map((c) => (
+                <div key={c.sectionId} className="bg-muted/40 rounded-md border px-2 py-1.5">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="min-w-0 truncate font-medium">
+                      {c.classCode || `#${c.sectionId}`} · {c.courseName}
+                    </span>
+                    <span className="text-muted-foreground shrink-0">
+                      {c.day == null || c.periodStart == null
+                        ? "chưa có giờ"
+                        : `${c.day === 6 ? "CN" : `T${c.day + 2}`} tiết ${c.periodStart}-${c.periodEnd}`}
+                    </span>
+                  </div>
+                  {(c.teacherIds ?? []).length > 1 && (
+                    <div className="text-muted-foreground">
+                      Đồng giảng: {(c.teachers ?? []).map((t) => t.name).join(", ")}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </DrawerSection>
+        )}
+
         {teacherId == null && (
           <p className="text-muted-foreground text-xs">
-            Tạo giảng viên xong sẽ hiện thêm mục khai giờ có thể dạy (nếu là thỉnh giảng).
+            Tạo giảng viên xong sẽ hiện thêm mục khai giờ có thể dạy.
           </p>
         )}
       </DrawerBody>
