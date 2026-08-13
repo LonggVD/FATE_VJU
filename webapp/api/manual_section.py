@@ -8,7 +8,7 @@ from domain.chot import khoa_vi_da_chot
 from domain.hoc_chung import don_nhom_hong, kiem_tra_sua_lop
 from domain.luoi import dong_bo_ket_qua
 from domain.pinning import ghim_theo_gio_form, lan_gio_sang_nhom
-from domain.sections import id_moi, validate_section_body
+from domain.sections import don_ma_lop_sau_xoa, id_moi, validate_section_body
 from domain.time_rules import apply_section_time
 from snapshot import save_snapshot
 from state import STATE
@@ -100,6 +100,9 @@ def api_manual_delete_section(data, section_id):
     if section_id not in data["sections"]:
         return loi(f"Không tìm thấy lớp id={section_id}.")
 
+    da_xoa = data["sections"][section_id]
+    course_id, ma_lop = da_xoa.get("course_id"), da_xoa.get("class_code")
+
     data["sections"].pop(section_id)
     data["submissions"].pop(section_id, None)
     if section_id in data["pending_section_ids"]:
@@ -109,6 +112,9 @@ def api_manual_delete_section(data, section_id):
     # Nhom hoc chung con MOT lop thi khong con la "hoc chung" - de lai thi giao
     # dien hien badge "Học chung" tren mot buoi don doc.
     don_nhom_hong(data)
+    # Xoa "AET2014-2" thi cac lop con lai (AET2014-3, -4...) don xuong 1 don vi
+    # (-2, -3...) - khong de trong so giua ma lop cua cung hoc phan.
+    don_ma_lop_sau_xoa(data, course_id, ma_lop)
 
     dong_bo_ket_qua(data, [section_id])
     save_snapshot()

@@ -1,8 +1,6 @@
 import { apiGet, apiPost, apiPatch, apiDelete, apiUpload } from "./api";
 
 export const getData = () => apiGet("/api/data");
-export const submitAvailability = (sectionId, windowSlots) =>
-  apiPost("/api/submit-availability", { sectionId, windowSlots });
 export const solveGuest = () => apiPost("/api/solve-guest");
 export const solveResident = () => apiPost("/api/solve-resident");
 // Keo-tha sua tay (thay cho "Tu choi - luan chuyen" cu). moveLesson khong ghi

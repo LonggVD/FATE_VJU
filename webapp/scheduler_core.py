@@ -253,28 +253,31 @@ def check_cross_program_conflicts(data):
     return results
 
 
-def submit_availability(data, section_id, window_slots):
-    """Dieu phoi vien nhap gio day cho 1 section thinh giang (mo phong 'Dieu phoi
-    vien nhap Giao vien + Gio co the day'). Cap nhat submissions + tra ve ket qua
-    check-trung NGAY cho dung GV do (khong can cho chay ca Giai doan 1)."""
-    p = data["params"]
-    section = data["sections"][section_id]
-    tid = section["teacher_id"]
+def guest_sections_can_thu_gio(data):
+    """Cac lop THINH GIANG con can xu ly truoc khi giai Giai doan 1 (xem
+    api/solve.py: api_solve_guest) - dung dung 3 dieu kien nay, KHONG tinh lai
+    tu dau, de giong het cach frontend (adapters/submissionQueue.js:
+    analyzeSubmissions) chia "Chưa phân công giảng viên" / "Chưa khai giờ",
+    tranh hai noi bao lech nhau con bao nhieu lop con thieu.
 
-    data["submissions"][section_id] = window_slots
-    if section_id in data["pending_section_ids"]:
-        data["pending_section_ids"].remove(section_id)
-
-    all_conflicts = check_cross_program_conflicts(data)
-    my_conflict = next((c for c in all_conflicts if c["teacherId"] == tid), None)
-
-    return {
-        "sectionId": section_id,
-        "teacherId": tid,
-        "teacherName": teacher_display(data, tid),
-        "windowLabels": [slot_label(w, p["slotsPerDay"]) for w in window_slots],
-        "crossProgramConflict": my_conflict,  # None neu GV nay chi day 1 chuong trinh (khong can check)
-    }
+    Mot lop con can xu ly khi:
+      - GV la CHO TRONG (teacher placeholder, chua ai duoc phan cong that) - giai
+        luc nay se gan lich cho mot "con nguoi" khong ton tai.
+      - hoac availability_assumed=True: co GV that nhung chua ai bao gio THAT,
+        he thong dang tam coi la "ranh ca tuan" (xem apply_section_time) - giai
+        luc nay se ra lich khong dung rang buoc gio thuc cua GV.
+      - hoac dang nam trong pending_section_ids: da khai nhung khong con khung
+        nao hop le (xung dot gio giua cac GV dong giang), submissions rong."""
+    pending = set(data["pending_section_ids"])
+    return [
+        s for s in data["sections"].values()
+        if s.get("teacher_type") == "GUEST"
+        and (
+            data["teachers"].get(s["teacher_id"], {}).get("placeholder")
+            or s.get("availability_assumed")
+            or s["id"] in pending
+        )
+    ]
 
 
 def solve_guest_phase(data, time_limit_s=30):

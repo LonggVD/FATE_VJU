@@ -1,10 +1,16 @@
 # -*- coding: utf-8 -*-
 """LOP HOC PHAN (section): bo du lieu rong, validate body, khoa nhan dien lop."""
 
+import re
+
 import fate_import
 from domain.programs import program_ids_cua_lop
 from domain.teachers import loai_lop
 from domain.time_rules import parse_class_time
+
+# Ma lop dang "<gi_do>-<so>" (vd "AET2014-3") - GIU CHU DAU, so O CUOI. Dung de
+# don gian sau khi xoa mot lop trong hoc phan (xem don_ma_lop_sau_xoa).
+_MA_LOP_SO_CUOI = re.compile(r"^(.*-)(\d+)$")
 
 
 def empty_manual_data():
@@ -146,6 +152,34 @@ def id_moi(d):
     while i in d:
         i += 1
     return i
+
+
+def don_ma_lop_sau_xoa(data, course_id, ma_lop_da_xoa):
+    """Sau khi xoa 1 lop dang "<prefix>-<so>" (vd hoc phan AET2014 co cac lop
+    AET2014-1..AET2014-7, xoa AET2014-2), don lai SO cua cac lop CON LAI trong
+    CUNG hoc phan de khong de trong: lop nao co so LON HON so vua xoa thi giam
+    di 1 (AET2014-3 -> AET2014-2, AET2014-4 -> AET2014-3...), giu nguyen do dai
+    so (dem 0 dau, neu co) cua tung lop.
+
+    CHI dong vao lop co CUNG hoc phan VA cung tien to chu (phan truoc dau "-"
+    cuoi) voi ma vua xoa - ma lop khac dang (khong khop mau "-<so>") thi bo qua,
+    tranh doi nham nhung ma go tay khong theo qui uoc nay."""
+    if course_id is None:
+        return
+    m = _MA_LOP_SO_CUOI.match((ma_lop_da_xoa or "").strip())
+    if not m:
+        return
+    tien_to, so_da_xoa = m.group(1), int(m.group(2))
+    for s in data["sections"].values():
+        if s.get("course_id") != course_id:
+            continue
+        cm = _MA_LOP_SO_CUOI.match((s.get("class_code") or "").strip())
+        if not cm or cm.group(1) != tien_to:
+            continue
+        so = int(cm.group(2))
+        if so > so_da_xoa:
+            do_dai = len(cm.group(2))
+            s["class_code"] = f"{tien_to}{so - 1:0{do_dai}d}"
 
 
 def khoa_lop(data, s):

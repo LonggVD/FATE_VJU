@@ -17,9 +17,6 @@
 
 import {
   BookOpen,
-  GraduationCap,
-  UserCheck,
-  Users,
   CalendarClock,
   CalendarDays,
   ClipboardList,
@@ -66,6 +63,13 @@ export const NAV_GUIDE = {
  *
  * `children` rong = muc don (khong xo ra), giong "Du lieu hoc phan".
  * `key` cua child chinh la `sub` cua trang - khop voi TABS trong DataPage/HistoryPage.
+ *
+ * "Giảng viên" TRUOC day la mot nhom rieng ngang hang (2 tab Co huu/Thinh
+ * giang, xem git history) - da GOP vao "Chuẩn bị dữ liệu → Giờ rảnh GV": ca
+ * hai deu la MAN QUAN LY GIANG VIEN, chi khac o loc theo loai truoc khi xem
+ * ten, nen tach thanh hai nhom rieng tren sidebar chi lam nguoi dung phai doan
+ * "sua thong tin GV" voi "khai gio ranh" nam o dau. Bo loc loai (Co huu/Thinh
+ * giang) gio nam TRONG trang, khong con la muc dieu huong rieng.
  */
 export const NAV_GROUPS = [
   {
@@ -74,29 +78,19 @@ export const NAV_GROUPS = [
     icon: BookOpen,
     children: [],
   },
-  // Giang vien la mot THUC THE rieng, khong phai mot buoc trong quy trinh: mot
-  // nguoi day nhieu lop, sua o day anh huong moi lop cua ho. Truoc day chi sua
-  // duoc qua ngan keo mo tu bang lop, va man "Gio ranh GV" chi hien THINH GIANG
-  // - khong co cho nao nhin thay toan bo giang vien co huu.
-  //
-  // Hai muc con = hai LOAI, vi hai loai duoc xep lich o hai giai doan khac nhau
-  // va thong tin can nhin cung khac (xem TeachersPage).
-  {
-    key: 'teachers',
-    label: 'Giảng viên',
-    icon: Users,
-    children: [
-      { key: 'resident', label: 'Cơ hữu', icon: UserCheck },
-      { key: 'guest', label: 'Thỉnh giảng', icon: GraduationCap },
-    ],
-  },
   {
     key: 'data',
     label: 'Chuẩn bị dữ liệu',
     icon: ClipboardList,
     children: [
-      { key: 'hours', label: 'Khung giờ đã báo', icon: Clock },
-      { key: 'availability', label: 'Giờ rảnh GV', icon: CalendarClock },
+      // "Khung giờ đã báo" -> "Học phần": trang nay gio la BANG VIEC PHAI LAM
+      // theo LOP hoc phan (chua co GV / co GV thinh giang nhung chua khai gio),
+      // khong con chi noi ve "khung gio" don thuan (xem SubmissionsPage).
+      { key: 'hours', label: 'Học phần', icon: Clock },
+      // "Giờ rảnh GV" -> "Giảng viên": trang nay da GOP ca thong tin GV (truoc
+      // o nhom "Giảng viên" rieng) VA gio ranh vao lam MOT, nen doi ten cho dung
+      // pham vi that (xem TeacherAvailabilityPage).
+      { key: 'availability', label: 'Giảng viên', icon: CalendarClock },
     ],
   },
   {

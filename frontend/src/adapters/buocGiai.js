@@ -21,8 +21,8 @@ export function demTheoPha(data) {
 
 // "153/165 đã xếp · 2 không xếp được" - doc mot cai la biet ket qua ra sao.
 const ketQua = (res) =>
-  `${res.placedCount}/${res.total} đã xếp`
-  + (res.unplaced?.length ? ` · ${res.unplaced.length} không xếp được` : "");
+  `${res.placedCount}/${res.total} đã xếp` +
+  (res.unplaced?.length ? ` · ${res.unplaced.length} không xếp được` : "");
 
 // guestResult/residentResult co the la LICH BAN DAU doc tu file (initial), chua
 // phai ket qua giai - moi cho hien trang thai deu phai phan biet, khong thi nap
@@ -30,7 +30,12 @@ const ketQua = (res) =>
 const daGiai = (res) => Boolean(res && !res.initial);
 
 export function buildSteps({
-  data, guestResult, residentResult, gd2HetHieuLuc, solveGuest, solveResident,
+  data,
+  guestResult,
+  residentResult,
+  gd2HetHieuLuc,
+  solveGuest,
+  solveResident,
 }) {
   const sq = data ? analyzeSubmissions(data) : null;
   const dem = demTheoPha(data);
@@ -40,19 +45,37 @@ export function buildSteps({
   return [
     {
       key: "collect",
-      label: "Thu giờ",
-      value: sq ? `${sq.doneCount}/${sq.guestCount} lớp thỉnh giảng đã báo giờ` : "—",
+      label: "Học phần",
+      value: sq
+        ? `${sq.doneCount}/${sq.guestCount} lớp thỉnh giảng sẵn sàng` +
+          (sq.unassigned.length > 0
+            ? ` · ${sq.unassigned.length} chưa có GV`
+            : "")
+        : "—",
       state: sq && sq.queue.length === 0 ? "done" : "todo",
     },
     {
       key: "guest",
       label: "Xếp thỉnh giảng",
       value: daGiai(guestResult) ? ketQua(guestResult) : chuaGiai("GUEST"),
-      note: daGiai(guestResult)
-        ? undefined
-        : "Xếp giờ cho các lớp chưa có giờ; lớp đã chốt giữ nguyên chỗ.",
+      // Con lop thinh giang CHUA SAN SANG (buoc 1 chua xong - thieu GV THAT
+      // hoac thieu gio) thi khong cho giai: solver se gan cho trong hoac lay
+      // tam "ranh ca tuan" cho nhung lop do, ra mot lich khong dung dieu kien
+      // THAT - phai xu ly xong truoc, xem webapp/scheduler_core.py:
+      // guest_sections_can_thu_gio/apply_section_time (qua sync_teacher_sections).
+      note:
+        sq && sq.queue.length > 0
+          ? `Còn ${sq.queue.length} lớp thỉnh giảng chưa sẵn sàng` +
+            (sq.unassigned.length > 0
+              ? ` (${sq.unassigned.length} chưa có GV)`
+              : "") +
+            ` — hoàn tất bước "Chuẩn bị dữ liệu" ở trên trước khi xếp.`
+          : daGiai(guestResult)
+            ? undefined
+            : "Xếp giờ cho các lớp chưa có giờ; lớp đã chốt giữ nguyên chỗ.",
       state: daGiai(guestResult) ? "done" : "todo",
       action: solveGuest,
+      disabled: Boolean(sq && sq.queue.length > 0),
       // Nut ghi thang VIEC no lam, khong phai chu "Giai" chung chung.
       actionLabel: daGiai(guestResult)
         ? "Xếp lại"
@@ -63,7 +86,9 @@ export function buildSteps({
     {
       key: "resident",
       label: "Ghép cơ hữu",
-      value: daGiai(residentResult) ? ketQua(residentResult) : chuaGiai("RESIDENT"),
+      value: daGiai(residentResult)
+        ? ketQua(residentResult)
+        : chuaGiai("RESIDENT"),
       // Nut buoc 3 bi mo khi chua chay buoc 2 - phai noi VI SAO, khong de nguoi
       // dung bam mai khong duoc ma khong hieu.
       note: !daGiai(guestResult)
@@ -75,8 +100,8 @@ export function buildSteps({
       // Nghiem GD2 vua bi huy vi buoc 2 chay lai - noi ro, khong de con so lang
       // le tu "158/163" ve "108 buoi chot tu file" (xem gd2HetHieuLuc).
       hint: gd2HetHieuLuc
-        ? "Kết quả ghép cơ hữu trước đó đã hết hiệu lực vì vừa xếp lại thỉnh giảng — "
-          + "các buổi đang hiện là giờ đã chốt sẵn. Chạy lại bước này."
+        ? "Kết quả ghép cơ hữu trước đó đã hết hiệu lực vì vừa xếp lại thỉnh giảng — " +
+          "các buổi đang hiện là giờ đã chốt sẵn. Chạy lại bước này."
         : undefined,
       action: solveResident,
       actionLabel: daGiai(residentResult)

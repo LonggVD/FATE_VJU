@@ -29,7 +29,7 @@ _TAT_CA = (
     bp_manual_teacher, # /api/manual/teacher
     bp_manual_course,  # /api/manual/course
     bp_manual_section, # /api/manual/section
-    bp_solve,      # /api/{submit-availability,solve-guest,solve-resident,results}
+    bp_solve,      # /api/{solve-guest,solve-resident,results}
     bp_schedule,   # /api/{move-lesson,clear-override}, /api/manual/save-schedule
     bp_chot,       # /api/manual/course/<id>/chot
     bp_hoc_chung,  # /api/manual/hoc-chung

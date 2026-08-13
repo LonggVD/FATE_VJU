@@ -42,6 +42,12 @@ export function analyzeSubmissions(data) {
 
   // Neu backend chua gui teacherType (ban cu), tra ve tu danh sach teachers.
   const typeById = new Map((data.teachers ?? []).map((t) => [t.id, t.type]));
+  // "(Chưa phân công)" - GV DAI DIEN cho 1 cho trong, khong phai con nguoi thuc
+  // (xem domain/response.py: isPlaceholder). Lop do KHONG can "khai gio" - can
+  // TIM GV THAT truoc, la mot van de khac han "co GV roi nhung chua bao gio".
+  // Truoc day hai truong hop nay bi tron chung mot hang doi "Cần thu giờ", dieu
+  // phoi vien bam "Nhap gio" cho mot cho trong thi vo nghia.
+  const placeholderById = new Map((data.teachers ?? []).map((t) => [t.id, Boolean(t.isPlaceholder)]));
 
   const rows = [];
   let residentCount = 0;
@@ -66,6 +72,7 @@ export function analyzeSubmissions(data) {
       s.availabilityAssumed ??
       (weekTotal > 0 && windowSlots.length >= Math.floor(weekTotal * WEEK_COVER_RATIO));
     const isEmpty = windowSlots.length === 0;
+    const isUnassigned = placeholderById.get(s.teacherId) === true;
 
     rows.push({
       ...s,
@@ -73,17 +80,28 @@ export function analyzeSubmissions(data) {
       windowSlots,
       isFreeChoice,
       isEmpty,
+      isUnassigned,
       state: isEmpty || isFreeChoice ? SUB_STATE.UNREPORTED : SUB_STATE.SET,
-      reason: isEmpty
-        ? "Điều phối viên chưa nộp"
-        : isFreeChoice
-          ? "Chưa khai giờ rảnh — đang để tự do cả tuần"
-          : null,
+      reason: isUnassigned
+        ? "Chưa phân công giảng viên"
+        : isEmpty
+          ? "Điều phối viên chưa nộp"
+          : isFreeChoice
+            ? "Chưa khai giờ rảnh — đang để tự do cả tuần"
+            : null,
     });
   }
 
-  const queue = rows.filter((r) => r.state === SUB_STATE.UNREPORTED);
-  const done = rows.filter((r) => r.state === SUB_STATE.SET);
+  // "queue" = TOAN BO viec con phai lam truoc khi giai Giai doan 1 - vua thieu
+  // GV THAT (isUnassigned) vua thieu GIO (state=UNREPORTED). Hai tap nay GAN
+  // NHU luon trung nhau tren du lieu that (cho trong chua ai buon khai gio ho)
+  // nhung tach RIENG de UI biet dua dieu phoi vien di dung huong: thieu GV thi
+  // phai "Phân công giảng viên" (SectionEditDrawer) truoc, thieu gio thi moi
+  // "Nhập giờ" (SubmissionWindowGrid) duoc.
+  const unassigned = rows.filter((r) => r.isUnassigned);
+  const needsHours = rows.filter((r) => !r.isUnassigned && r.state === SUB_STATE.UNREPORTED);
+  const queue = rows.filter((r) => r.isUnassigned || r.state === SUB_STATE.UNREPORTED);
+  const done = rows.filter((r) => !r.isUnassigned && r.state === SUB_STATE.SET);
 
   // Tien do theo dieu phoi vien - vi day la man hinh cua ho, va viec con lai
   // luon thuoc ve mot nguoi cu the.
@@ -94,7 +112,7 @@ export function analyzeSubmissions(data) {
     for (const key of r.coordinators?.length ? r.coordinators : [r.coordinator || "(không rõ)"]) {
       const acc = byCoord.get(key) ?? { coordinator: key, total: 0, done: 0 };
       acc.total += 1;
-      if (r.state === SUB_STATE.SET) acc.done += 1;
+      if (!r.isUnassigned && r.state === SUB_STATE.SET) acc.done += 1;
       byCoord.set(key, acc);
     }
   }
@@ -112,6 +130,8 @@ export function analyzeSubmissions(data) {
   return {
     rows,
     queue,
+    unassigned,
+    needsHours,
     residentCount,
     doneCount: done.length,
     guestCount: rows.length,

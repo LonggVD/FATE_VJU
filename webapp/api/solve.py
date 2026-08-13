@@ -6,7 +6,7 @@ qua do -> GD2 ghep co huu vao cho con lai. Ca hai pha deu chay trong `with
 tam_bo_ghim(...)` de nhung lop giao vu vua bam "Bo ghim" that su duoc xep lai.
 """
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify
 
 from api.common import can_du_lieu, loi
 from domain.luoi import attach_ca_hai, attach_override_metadata, dong_bo_ket_qua
@@ -19,31 +19,22 @@ import scheduler_core as sc
 bp = Blueprint("solve", __name__)
 
 
-@bp.post("/api/submit-availability")
-@can_du_lieu
-def api_submit_availability(data):
-    """Dieu phoi vien nhap 'Gio co the day' cho mot lop thinh giang."""
-    body = request.get_json(force=True)
-    section_id = int(body["sectionId"])
-    window_slots = [int(w) for w in body["windowSlots"]]
-    if not window_slots:
-        return loi("Phải nhập ít nhất 1 khung giờ.")
-
-    # Cac lop trong pending_section_ids luon la THINH GIANG - ap dung dung gioi
-    # han "thinh giang toi Thu 7" (sc.MAX_DAY_INDEX).
-    slots_per_day = data["params"]["slotsPerDay"]
-    max_day = sc.max_day_index("GUEST")
-    if any((w // slots_per_day) > max_day for w in window_slots):
-        return loi("Có khung giờ ngoài phạm vi (thỉnh giảng chỉ dạy tới Thứ 7).")
-
-    result = sc.submit_availability(data, section_id, window_slots)
-    return jsonify({**result, "remainingPending": len(data["pending_section_ids"])})
-
-
 @bp.post("/api/solve-guest")
 @can_du_lieu
 def api_solve_guest(data):
     """Giai doan 1: xep cac lop THINH GIANG theo khung gio da bao."""
+    # CHAN giai khi con lop chua san sang: hoac chua co GV THAT (con la cho
+    # trong), hoac co GV nhung chua bao gio THAT - ca hai deu khien solver phai
+    # "danh tam" (gan cho trong, hoac coi la ranh ca tuan), ra mot lich khong
+    # dung dieu kien thuc te. Dieu phoi vien/CTDT phai xu ly xong (man "Chuẩn bị
+    # dữ liệu → Học phần") truoc khi xep, khong duoc bo qua buoc nay.
+    con_thieu = sc.guest_sections_can_thu_gio(data)
+    if con_thieu:
+        return loi(
+            f"Còn {len(con_thieu)} lớp thỉnh giảng chưa sẵn sàng (thiếu giảng viên hoặc thiếu "
+            "giờ) — xử lý hết ở 'Chuẩn bị dữ liệu → Học phần' trước khi xếp.",
+            missingCount=len(con_thieu),
+        )
     with tam_bo_ghim(data):
         result = solve_guest_with_overrides(data)
     attach_override_metadata(data, result, "GUEST")

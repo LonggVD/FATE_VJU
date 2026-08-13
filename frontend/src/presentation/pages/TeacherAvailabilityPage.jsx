@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
+import { GraduationCap, Plus, TriangleAlert, Upload } from "lucide-react";
 import { useAppData } from "../../context/AppDataContext";
-import SubmissionWindowGrid, { EditAvailabilityButton } from "../submissions/SubmissionWindowGrid";
-import { DAY_LABELS } from "../../adapters/dayPeriod";
-import { FilterSelect } from "@/components/shared/filter-select";
+import TeacherEditDrawer from "../manual/TeacherEditDrawer";
+import ImportLecturersDialog from "../manual/ImportLecturersDialog";
 import { ListSearch } from "@/components/shared/list-search";
+import { FilterSelect } from "@/components/shared/filter-select";
 import { Notice } from "@/components/shared/notice";
 import { Pill } from "@/components/shared/pill";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -14,161 +16,108 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { NativeSelect } from "@/components/ui/native-select";
+import { cn } from "@/lib/utils";
 
-// Tone thay cho class danger/warn/ok cu - dong bo voi ManualEntryPage.
-const STATUS_META = {
-  missing_time: { label: "Thiếu giờ", tone: "red" },
-  ready_auto: { label: "Tự động xếp", tone: "amber" },
-  ready_fixed: { label: "Có giờ cố định", tone: "emerald" },
+// Trang nay GOP HAI man truoc day: "Giảng viên" (nhom rieng ngang hang, 2 tab
+// Co huu/Thinh giang) va "Chuẩn bị dữ liệu → Giờ rảnh GV" (chi xem/khai gio cua
+// THINH GIANG). Ca hai deu la MOT viec - quan ly giang vien - chi khac o loc
+// theo loai truoc khi tim ten, nen gio con MOT man duy nhat: chon loai (Co huu/
+// Thinh giang) bang nhan o dau trang, roi loc/tim TEN trong dung loai do. Bam
+// vao mot dong mo TeacherEditDrawer - ngan keo do da co san CA thong tin GV VA
+// luoi "gio co the day" (ke ca co huu, xem TeacherEditDrawer) nen khong can
+// luoi rieng ngay tren trang danh sach nua.
+const LOAI = {
+  RESIDENT: {
+    nhan: "cơ hữu",
+    moTa: "Giảng viên của trường — lớp của họ được xếp ở Giai đoạn 2.",
+  },
+  GUEST: {
+    nhan: "thỉnh giảng",
+    moTa: "Khách mời từ đơn vị khác — lớp của họ được xếp ở Giai đoạn 1, theo khung giờ đã khai.",
+  },
 };
 
-function dayNumber(day) {
-  if (day == null) return "";
-  return day === 6 ? "CN" : day + 2;
+function tongTiet(classes, teacherId) {
+  let n = 0;
+  for (const c of classes) {
+    if (!(c.teacherIds ?? [c.teacherId]).includes(teacherId)) continue;
+    if (c.periodStart == null || c.periodEnd == null) continue;
+    n += c.periodEnd - c.periodStart + 1;
+  }
+  return n;
 }
 
-// Nen 1 list slot roi rac thanh cau doc duoc: [12,13,14,25] -> "T3 tiết 1-3 · T4
-// tiết 2". O che do XEM nguoi dung can doc duoc ngay GV ranh khi nao, khong nen
-// bat ho tu do lai 84 o trong luoi.
-function moTaGioRanh(slots = [], slotsPerDay) {
-  const theoNgay = new Map();
-  for (const s of [...slots].sort((a, b) => a - b)) {
-    const day = Math.floor(s / slotsPerDay);
-    const period = (s % slotsPerDay) + 1;
-    if (!theoNgay.has(day)) theoNgay.set(day, []);
-    theoNgay.get(day).push(period);
-  }
-  const phan = [];
-  for (const [day, tiets] of [...theoNgay.entries()].sort((a, b) => a[0] - b[0])) {
-    const nhan = (DAY_LABELS[day] ?? `N${day + 1}`)
-      .replace("Thứ ", "T")
-      .replace("Chủ nhật", "CN");
-    const doan = [];
-    let dau = tiets[0];
-    let truoc = tiets[0];
-    for (const t of tiets.slice(1)) {
-      if (t === truoc + 1) { truoc = t; continue; }
-      doan.push(dau === truoc ? `${dau}` : `${dau}-${truoc}`);
-      dau = truoc = t;
-    }
-    doan.push(dau === truoc ? `${dau}` : `${dau}-${truoc}`);
-    phan.push(`${nhan} tiết ${doan.join(", ")}`);
-  }
-  return phan;
-}
-
-// Trang KHAI + SUA gio co the day cua giang vien thinh giang, tra cuu theo
-// Khoa/Nganh/Hoc phan/Ten GV. Chi hien luoi cho DUNG 1 GV dang chon - khong ve
-// chong nhieu luoi cung luc.
-//
-// Truoc day trang nay CHI DE XEM, cho khai gio nam trong TeacherEditDrawer ben
-// "Dữ liệu học phần" - nhung ten muc ("Chuẩn bị dữ liệu → Giờ rảnh GV") va cau
-// "Giảng viên này chưa khai giờ rảnh nào" thi hua hen khai duoc, ma bam vao
-// khong co gi xay ra. Nay dung thang SubmissionWindowGrid nhu drawer va man
-// "Khung giờ đã báo" - mot cach tuong tac duy nhat cho ca ba cho, khong che
-// them kieu click rieng.
-//
-// MAC DINH LA XEM: vao trang thay gio da luu (luoi readOnly + cau tom tat), bam
-// "Chỉnh sửa" moi vao che do sua, xong bam "Lưu" hoac "Hủy". Ban truoc luon o
-// che do sua nen khong phan biet duoc du lieu that voi thao tac dang do.
 export default function TeacherAvailabilityPage({ role }) {
-  const { data, loading, updateManualTeacher } = useAppData();
-  const canEdit = role !== "viewer";
-  const [editing, setEditing] = useState(false);
-  const [facultyFilter, setFacultyFilter] = useState("");
-  const [programFilter, setProgramFilter] = useState("");
-  const [courseFilter, setCourseFilter] = useState("");
+  const { data, loading } = useAppData();
+  // Mac dinh THINH GIANG: day la nhom co viec "khai gio" cap thiet hon (Giai
+  // doan 1 phu thuoc khung gio ho bao), con co huu Giai doan 2 tu do chon gio.
+  const [loai, setLoai] = useState("GUEST");
   const [search, setSearch] = useState("");
-  const [selectedId, setSelectedId] = useState(null);
+  const [orgFilter, setOrgFilter] = useState("");
+  const [drawerId, setDrawerId] = useState(null);
+  const [importOpen, setImportOpen] = useState(false);
 
-  // Trang nay chi danh cho GV THINH GIANG khai gio ranh - gioi han toi Thu 7
-  // (index 5), dung quy tac sc.MAX_DAY_INDEX["GUEST"] o backend.
-  const numDays = Math.min(data?.numDays ?? 7, 6);
-  const slotsPerDay = data?.slotsPerDay ?? 12;
+  const meta = LOAI[loai];
+  const canEdit = role !== "viewer";
+  const classes = data?.classes || [];
 
-  // Voi moi GV thinh giang, gop lai cac Khoa/Nganh(CTDT)/Hoc phan ho dang day
-  // (suy tu data.classes - moi lop 1 dong, da co san courseName/programName/
-  // programLabel). programName la ma nganh THAT (BCSE, ESAS...) - loc theo
-  // truong nay huu ich hon Khoa, vi du lieu nhap tay hien gio toan bo CTDT
-  // deu roi vao chung 1 Khoa mac dinh "Chua phan khoa".
-  const teacherMeta = useMemo(() => {
-    const map = new Map();
-    for (const c of data?.classes || []) {
-      if (c.teacherType !== "GUEST") continue;
-      if (!map.has(c.teacherId)) map.set(c.teacherId, { courses: new Set(), faculties: new Set(), programs: new Set(), classes: [] });
-      const m = map.get(c.teacherId);
-      if (c.courseName) m.courses.add(c.courseName);
-      // MA DON, khong phai nguyen van o: lop "BCSE+MJM" phai ra ca khi loc BCSE
-      // lan khi loc MJM.
-      for (const ma of c.programParts ?? []) m.programs.add(ma);
-      // Ten Khoa lay thang tu backend. Truoc day boc tu phan trong ngoac cuoi
-      // programLabel ("BCSE (Chưa phân khoa)") - vo ngay khi nhan chuyen sang
-      // nguyen van nhu file ("BCSE+MJM", khong con ngoac) va bo loc Khoa rong tron.
-      if (c.facultyName) m.faculties.add(c.facultyName);
-      m.classes.push(c);
+  // Lop cua tung nguoi: gom theo teacherIds (CA nhom dong giang), khong chi GV
+  // chinh - nguoi thu hai tro di cung day lop do that.
+  const lopTheoGv = useMemo(() => {
+    const m = new Map();
+    for (const c of classes) {
+      for (const tid of c.teacherIds ?? [c.teacherId]) {
+        if (!m.has(tid)) m.set(tid, []);
+        m.get(tid).push(c);
+      }
     }
-    return map;
-  }, [data]);
+    return m;
+  }, [classes]);
 
-  const faculties = useMemo(
-    () => [...new Set([...teacherMeta.values()].flatMap((m) => [...m.faculties]))].sort(),
-    [teacherMeta],
-  );
-  const programsList = useMemo(
-    () => [...new Set([...teacherMeta.values()].flatMap((m) => [...m.programs]))].sort(),
-    [teacherMeta],
-  );
-  const courses = useMemo(
-    () => [...new Set([...teacherMeta.values()].flatMap((m) => [...m.courses]))].sort(),
-    [teacherMeta],
-  );
-
-  // Loai cac ban ghi CHO TRONG (lop nhap tu Excel chua phan cong giang vien):
-  // chung khong phai nguoi that nen khong co "gio ranh" de khai, va so luong
-  // rat lon (file HK1 co toi 114) - de vao se lam ngop danh sach GV that.
-  const guestTeachers = useMemo(
-    () => (data?.teachers || []).filter((t) => t.type === "GUEST" && !t.isPlaceholder),
+  // Ban ghi "cho trong" (lop chua phan cong giang vien) khong phai con nguoi -
+  // loc khoi ca hai loai, neu khong tab thinh giang ngap hang chuc dong
+  // "Phòng Đào tạo điều phối".
+  const all = useMemo(
+    () => (data?.teachers || []).filter((t) => !t.isPlaceholder),
     [data],
   );
+  const theoLoai = useMemo(() => {
+    const m = { RESIDENT: [], GUEST: [] };
+    for (const t of all) if (m[t.type]) m[t.type].push(t);
+    return m;
+  }, [all]);
+  const cuaLoai = theoLoai[loai] ?? [];
 
-  const filtered = useMemo(() => {
+  const orgs = useMemo(
+    () => [...new Set(cuaLoai.map((t) => (t.org || "").trim()).filter(Boolean))].sort(),
+    [cuaLoai],
+  );
+
+  const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return guestTeachers.filter((t) => {
-      const meta = teacherMeta.get(t.id);
-      if (facultyFilter && !meta?.faculties.has(facultyFilter)) return false;
-      if (programFilter && !meta?.programs.has(programFilter)) return false;
-      if (courseFilter && !meta?.courses.has(courseFilter)) return false;
-      if (q && !(t.nameRaw || t.name || "").toLowerCase().includes(q)) return false;
-      return true;
-    });
-  }, [guestTeachers, teacherMeta, facultyFilter, programFilter, courseFilter, search]);
+    return cuaLoai
+      .filter((t) => {
+        if (orgFilter && (t.org || "").trim() !== orgFilter) return false;
+        if (!q) return true;
+        return [t.nameRaw, t.name, t.email, t.org]
+          .some((v) => (v || "").toLowerCase().includes(q));
+      })
+      .sort((a, b) => (a.nameRaw || a.name || "").localeCompare(b.nameRaw || b.name || ""));
+  }, [cuaLoai, orgFilter, search]);
 
-  const selected = filtered.find((t) => t.id === selectedId) || filtered[0] || null;
-  const selectedMeta = selected ? teacherMeta.get(selected.id) : null;
-  const daSoGio = selected?.availabilitySlots?.length ?? 0;
+  const drawerTeacher =
+    drawerId === "new" ? null : (data?.teachers || []).find((t) => t.id === drawerId) ?? null;
 
-  // Luu xong, /api/data tra ve bo teachers moi -> initialSlots doi -> luoi tu
-  // dong bo lai theo server. Ghim selectedId de lan re-render sau khong roi ve
-  // filtered[0] neu thu tu danh sach doi.
-  const handleSaveAvailability = async (slots) => {
-    if (!selected) return;
-    setSelectedId(selected.id);
-    await updateManualTeacher(selected.id, { availability: slots });
-    setEditing(false);
-  };
-
-  // Doi GV giua chung thi bo luon ban nhap dang sua - giu che do sua khi da
-  // sang nguoi khac se de nham tuong sua tiep cua nguoi cu.
-  const chonGiangVien = (id) => {
-    setSelectedId(id);
-    setEditing(false);
-  };
+  // Chua nap danh sach chinh thuc thi he thong dang DOAN loai GV tu o "Don vi
+  // cong tac" trong file ke hoach - o do giao vu go tay nen sai du kieu. Noi ro
+  // ra thay vi de nguoi dung tin bang nay la chuan.
+  const chuaNapDanhSach = all.length > 0 && all.every((t) => t.inLecturerList == null);
+  const ngoaiDanhSach = cuaLoai.filter((t) => t.inLecturerList === false);
 
   if (!data) {
     return (
       <Notice tone="slate">
-        Chưa có dữ liệu — sang "Dữ liệu học phần" để nhập hoặc nạp dữ liệu trước.
+        Chưa có dữ liệu — sang “Dữ liệu học phần” để nhập hoặc nạp dữ liệu trước.
       </Notice>
     );
   }
@@ -177,187 +126,173 @@ export default function TeacherAvailabilityPage({ role }) {
     <div className="space-y-3">
       <div className="bg-card rounded-xl border shadow-sm">
         <div className="flex flex-wrap items-center gap-2 border-b p-3">
-          <h3 className="mr-1 text-sm font-semibold">Bộ lọc</h3>
-          {/* Chi GV thinh giang moi can khai gio: GV co hue duoc xep tu do o
-              Giai doan 2 nen khong co khai niem "khung gio ranh". Noi ro ra de
-              giao vu khong di tim mot nguoi co huu o day roi tuong thieu. */}
-          <span className="text-muted-foreground text-xs">
-            {filtered.length}/{guestTeachers.length} giảng viên thỉnh giảng khớp
-          </span>
+          {/* Loc LOAI GV truoc tien - day la bo loc CAP MOT, quyet dinh ca danh
+              sach ben duoi va nghia cua cot "Giờ có thể dạy". Dung chung mot
+              kieu "segmented" voi tab man "Học phần" de dong bo. */}
+          <div className="bg-muted inline-flex h-9 items-center rounded-lg p-0.75" role="tablist">
+            {Object.entries(LOAI).map(([key, m]) => (
+              <button
+                type="button"
+                key={key}
+                role="tab"
+                aria-selected={loai === key}
+                onClick={() => { setLoai(key); setOrgFilter(""); }}
+                className={cn(
+                  "inline-flex h-full items-center gap-1.5 rounded-md px-2.5 text-sm font-medium capitalize transition-colors",
+                  loai === key
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {m.nhan}
+                <span className="bg-muted-foreground/15 rounded px-1.5 text-xs tabular-nums">
+                  {theoLoai[key]?.length ?? 0}
+                </span>
+              </button>
+            ))}
+          </div>
+          <span className="text-muted-foreground text-xs">{meta.moTa}</span>
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <ListSearch
               value={search}
               onChange={setSearch}
-              placeholder="Tìm tên giảng viên"
-              className="w-full sm:w-56"
+              placeholder="Tìm tên, email, đơn vị"
+              className="w-full sm:w-60"
             />
             <FilterSelect
-              label="Mọi khoa"
-              value={facultyFilter || null}
-              options={faculties}
-              onChange={(v) => setFacultyFilter(v ?? "")}
-            />
-            <FilterSelect
-              label="Mọi ngành (CTĐT)"
-              value={programFilter || null}
-              options={programsList}
-              onChange={(v) => setProgramFilter(v ?? "")}
-            />
-            <FilterSelect
-              label="Mọi học phần"
+              label="Mọi đơn vị"
               searchable
-              value={courseFilter || null}
-              options={courses}
-              onChange={(v) => setCourseFilter(v ?? "")}
+              value={orgFilter || null}
+              options={orgs}
+              onChange={(v) => setOrgFilter(v ?? "")}
             />
+            {canEdit && loai === "RESIDENT" && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={loading}
+                onClick={() => setImportOpen(true)}
+                title="Nạp file danh sách giảng viên cơ hữu của trường (.xlsx) — dùng làm nguồn chính thức để phân loại"
+              >
+                <Upload className="size-4" />
+                Nhập danh sách cơ hữu
+              </Button>
+            )}
+            {canEdit && (
+              <Button size="sm" disabled={loading} onClick={() => setDrawerId("new")}>
+                <Plus className="size-4" />
+                Thêm giảng viên
+              </Button>
+            )}
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 border-b p-3">
-          <span className="text-muted-foreground text-xs">Giảng viên</span>
-          <NativeSelect
-            className="w-full sm:w-96"
-            value={selected?.id ?? ""}
-            onChange={(e) => chonGiangVien(Number(e.target.value))}
-          >
-            {filtered.length === 0 && <option value="">— Không có giảng viên khớp —</option>}
-            {filtered.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.nameRaw || t.name} ·{" "}
-                {(t.availabilitySlots || []).length > 0
-                  ? `${t.availabilitySlots.length} ô rảnh`
-                  : "chưa khai giờ"}
-              </option>
-            ))}
-          </NativeSelect>
+        {chuaNapDanhSach && loai === "RESIDENT" && (
+          <div className="border-b p-3">
+            <Notice tone="amber" icon={TriangleAlert}>
+              Chưa nạp danh sách giảng viên cơ hữu. Hệ thống đang <strong>đoán</strong> loại giảng
+              viên từ ô “Đơn vị công tác” trong file kế hoạch giảng dạy — ô đó giáo vụ gõ tay mỗi kỳ
+              nên hay bỏ trống hoặc ghi mỗi dòng một kiểu. Bấm <strong>Nhập danh sách cơ hữu</strong>{" "}
+              để phân loại theo danh sách chính thức.
+            </Notice>
+          </div>
+        )}
+
+        {ngoaiDanhSach.length > 0 && (
+          <div className="border-b p-3">
+            <Notice tone="amber" icon={TriangleAlert}>
+              {ngoaiDanhSach.length} người ở tab này <strong>không có trong danh sách cơ hữu</strong>{" "}
+              nhưng đang được xếp {meta.nhan}: {ngoaiDanhSach.slice(0, 5).map((t) => t.nameRaw || t.name).join(", ")}
+              {ngoaiDanhSach.length > 5 && `, +${ngoaiDanhSach.length - 5}`}. Nên bổ sung vào danh
+              sách hoặc chuyển loại tại đây.
+            </Notice>
+          </div>
+        )}
+
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>#</TableHead>
+                <TableHead>Họ tên</TableHead>
+                <TableHead>Đơn vị công tác</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>SĐT</TableHead>
+                <TableHead className="text-right">Lớp kỳ này</TableHead>
+                <TableHead className="text-right">Tiết/tuần</TableHead>
+                <TableHead>Giờ có thể dạy</TableHead>
+                <TableHead>Nguồn phân loại</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {visible.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={9} className="text-muted-foreground py-6 text-center">
+                    Không có giảng viên {meta.nhan} nào khớp.
+                  </TableCell>
+                </TableRow>
+              )}
+              {visible.map((t) => {
+                const lop = lopTheoGv.get(t.id) || [];
+                const daKhai = t.availabilitySlots?.length ?? 0;
+                return (
+                  <TableRow
+                    key={t.id}
+                    className="hover:bg-muted/50 cursor-pointer"
+                    onClick={() => setDrawerId(t.id)}
+                  >
+                    <TableCell className="text-muted-foreground tabular-nums">{t.id}</TableCell>
+                    <TableCell className="font-medium">
+                      {t.title ? `${t.title} ` : ""}
+                      {t.nameRaw || t.name}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground max-w-[16rem] truncate">
+                      {t.org || "—"}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{t.email || "—"}</TableCell>
+                    <TableCell className="text-muted-foreground">{t.phone || "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums">{lop.length}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {tongTiet(classes, t.id) || "—"}
+                    </TableCell>
+                    <TableCell>
+                      {daKhai > 0 ? (
+                        <Pill tone="emerald">{daKhai} tiết đã khai</Pill>
+                      ) : (
+                        <Pill tone="slate">chưa khai — tự do cả tuần</Pill>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {t.inLecturerList === true && <Pill tone="emerald">danh sách cơ hữu</Pill>}
+                      {t.inLecturerList === false && <Pill tone="slate">ngoài danh sách</Pill>}
+                      {t.inLecturerList == null && (
+                        <Pill tone="amber">đoán từ ô đơn vị</Pill>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
         </div>
 
-        <div className="p-3">
-          {!selected ? (
-            <p className="text-muted-foreground text-xs">
-              Chọn 1 giảng viên ở ô phía trên để khai giờ rảnh.
-            </p>
-          ) : (
-            <div className="space-y-3">
-              <div>
-                <h3 className="text-sm font-semibold">
-                  {selected.title ? `${selected.title} ` : ""}
-                  {selected.nameRaw || selected.name}
-                </h3>
-                <p className="text-muted-foreground text-xs">
-                  {selected.org || "—"}
-                  {selectedMeta?.courses.size > 0 && (
-                    <> · Dạy: {[...selectedMeta.courses].join(", ")}</>
-                  )}
-                </p>
-              </div>
-
-              {/* Luoi khai gio + bang lop nam CANH NHAU: dang tick gio thi van
-                  phai nhin duoc GV nay co nhung lop nao va lop nao da chot gio
-                  - do chinh la can cu de biet nen tick khung nao. Man hep thi
-                  flex-wrap cho bang tut xuong duoi. */}
-              <div className="flex flex-wrap items-start gap-4">
-                <div className="min-w-100 flex-1 space-y-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h4 className="text-sm font-semibold">Giờ có thể dạy</h4>
-                    {editing ? (
-                      <span className="text-muted-foreground text-xs">
-                        Tick <strong className="text-foreground">MỌI tiết</strong> rảnh trong
-                        tuần (không chỉ tiết bắt đầu) — hệ thống tự tìm giờ bắt đầu hợp lệ cho
-                        từng lớp.
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground text-xs">
-                        {daSoGio > 0 ? `${daSoGio} ô đã khai` : "Chưa khai giờ nào"}
-                      </span>
-                    )}
-                    {!editing && canEdit && (
-                      <div className="ml-auto">
-                        <EditAvailabilityButton
-                          disabled={loading}
-                          onClick={() => setEditing(true)}
-                        >
-                          {daSoGio > 0 ? "Chỉnh sửa" : "Khai giờ rảnh"}
-                        </EditAvailabilityButton>
-                      </div>
-                    )}
-                  </div>
-
-                  {!editing && daSoGio > 0 && (
-                    <p className="text-muted-foreground text-xs">
-                      {moTaGioRanh(selected.availabilitySlots, slotsPerDay).join(" · ")}
-                    </p>
-                  )}
-
-                  <SubmissionWindowGrid
-                    key={`${selected.id}-${editing ? "edit" : "view"}`}
-                    numDays={numDays}
-                    slotsPerDay={slotsPerDay}
-                    initialSlots={selected.availabilitySlots || []}
-                    saving={loading}
-                    readOnly={!editing}
-                    allowEmpty
-                    saveLabel={(n) => (n === 0 ? "Xóa hết giờ rảnh" : `Lưu ${n} khung giờ`)}
-                    onSave={handleSaveAvailability}
-                    onCancel={() => setEditing(false)}
-                  />
-                </div>
-
-                <div className="min-w-80 flex-1">
-                  <h4 className="mb-2 text-sm font-semibold">
-                    Các lớp đang dạy ({selectedMeta?.classes.length ?? 0})
-                  </h4>
-                  <div className="overflow-hidden rounded-lg border">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>#</TableHead>
-                          <TableHead>Học phần</TableHead>
-                          <TableHead>Mã lớp</TableHead>
-                          <TableHead>Ngành</TableHead>
-                          <TableHead>Thời gian</TableHead>
-                          <TableHead>Trạng thái</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {(selectedMeta?.classes || []).map((c) => {
-                          const meta = STATUS_META[c.status] || { label: c.status, tone: "slate" };
-                          return (
-                            <TableRow key={c.sectionId}>
-                              <TableCell className="text-muted-foreground tabular-nums">
-                                {c.sectionId}
-                              </TableCell>
-                              <TableCell className="whitespace-normal">{c.courseName}</TableCell>
-                              <TableCell>{c.classCode || "—"}</TableCell>
-                              <TableCell>{c.programName || "—"}</TableCell>
-                              <TableCell>
-                                {c.timeLabel || (c.timeAssumed
-                                  ? `Tự xếp${c.day != null ? ` (đang: T${dayNumber(c.day)} tiết ${c.periodStart}-${c.periodEnd})` : ""}`
-                                  : "—")}
-                              </TableCell>
-                              <TableCell>
-                                <Pill tone={meta.tone}>{meta.label}</Pill>
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                        {(!selectedMeta || selectedMeta.classes.length === 0) && (
-                          <TableRow className="hover:bg-transparent">
-                            <TableCell colSpan={6} className="text-muted-foreground py-6 text-center">
-                              Chưa có lớp nào.
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+        <div className="text-muted-foreground border-t px-3 py-2 text-xs">
+          <GraduationCap className="mr-1 inline size-3.5" />
+          Bấm vào một dòng để sửa thông tin, khai giờ có thể dạy hoặc chuyển loại cơ hữu ⇄ thỉnh giảng.
         </div>
       </div>
+
+      {drawerId != null && (
+        <TeacherEditDrawer
+          data={data}
+          teacher={drawerTeacher}
+          classes={lopTheoGv.get(drawerId) || []}
+          onClose={() => setDrawerId(null)}
+        />
+      )}
+
+      {importOpen && <ImportLecturersDialog open onOpenChange={setImportOpen} />}
     </div>
   );
 }

@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
-import { CircleCheck, X } from "lucide-react";
+import { Fragment, useMemo, useState } from "react";
+import { CircleCheck, TriangleAlert, UserRoundPlus, X } from "lucide-react";
 import { useAppData } from "../../context/AppDataContext";
 import SubmissionWindowGrid from "../submissions/SubmissionWindowGrid";
+import SectionEditDrawer from "../manual/SectionEditDrawer";
 import { analyzeSubmissions, filterRows, SUB_STATE, SUB_STATE_META } from "../../adapters/submissionQueue";
 import { slotRangeLabel } from "../../adapters/crossConflictAnalysis";
 import { FilterSelect } from "@/components/shared/filter-select";
@@ -48,14 +49,23 @@ function Card({ title, note, children, headExtra }) {
 }
 
 export default function SubmissionsPage({ role }) {
-  const { data, loading, doSubmitAvailability } = useAppData();
+  const { data, loading, error, updateManualTeacher } = useAppData();
   const [view, setView] = useState(null);
-  const [openSectionId, setOpenSectionId] = useState(null);
+  // Nhap gio la mot GIANG VIEN dang mo, khong phai 1 lop: mot GV thuong day
+  // nhieu lop cung mon (AET2014-1/2...), khai gio ranh la chuyen CUA NGUOI DO,
+  // ap dung cho toan bo lop ho day - khong phai chuyen tung lop rieng le. Truoc
+  // day khai theo lop nen 1 GV day 2 lop phai khai 2 lan giong nhau.
+  const [openTeacherId, setOpenTeacherId] = useState(null);
+  // Lop dang mo SectionEditDrawer de PHAN CONG giang vien (khac openTeacherId -
+  // cai do mo luoi Nhap gio cho MOT NGUOI). Hai viec khac han nhau (chon NGUOI
+  // vs chon GIO) nen dung hai state, khong tai dung 1 bien roi if/else theo "loai".
+  const [assignSectionId, setAssignSectionId] = useState(null);
   const [search, setSearch] = useState("");
   const [program, setProgram] = useState("");
   const [stateFilter, setStateFilter] = useState("");
   const [limit, setLimit] = useState(PAGE_STEP);
   const [queueLimit, setQueueLimit] = useState(QUEUE_STEP);
+  const [unassignedLimit, setUnassignedLimit] = useState(QUEUE_STEP);
   const [coordFilter, setCoordFilter] = useState(null);
   const canEdit = role !== "viewer";
 
@@ -73,24 +83,47 @@ export default function SubmissionsPage({ role }) {
   const activeView = view ?? (sq.queue.length > 0 ? VIEW.QUEUE : VIEW.TABLE);
   const pct = sq.guestCount ? Math.round((sq.doneCount / sq.guestCount) * 100) : 0;
 
-  const handleSave = async (sectionId, slots) => {
-    await doSubmitAvailability(Number(sectionId), slots);
-    setOpenSectionId(null);
+  // Luu gio ranh cho CA GIANG VIEN (khong phai 1 lop) - dung LAI dung API voi
+  // tab "Giảng viên" (xem TeacherEditDrawer.handleSaveAvailability): backend tu
+  // ap dung cho MOI lop cua nguoi nay dang "de he thong tu xep"
+  // (domain/teachers.py: sync_teacher_sections), nen 1 GV day nhieu lop chi
+  // khai MOT LAN duy nhat, khong phai lam lai cho tung lop.
+  const handleSaveTeacherAvailability = async (teacherId, slots) => {
+    try {
+      await updateManualTeacher(teacherId, { availability: slots });
+      setOpenTeacherId(null);
+    } catch {
+      // updateManualTeacher da tu ghi Nhat ky + gan `error` (hien ben duoi) -
+      // nuot loi o day de khong bao "Unhandled promise rejection" tren console;
+      // KHONG dong panel, de dieu phoi vien con nguyen luoi dang chon de sua/thu lai.
+    }
   };
 
   const tabs = [
-    { key: VIEW.QUEUE, label: "Cần thu giờ", count: sq.queue.length, urgent: sq.queue.length > 0 },
+    { key: VIEW.QUEUE, label: "Cần xử lý", count: sq.queue.length, urgent: sq.queue.length > 0 },
     { key: VIEW.TABLE, label: "Bảng tra cứu", count: sq.guestCount },
     { key: VIEW.COORDS, label: "Theo điều phối viên", count: sq.coordinatorsBehind.length },
   ];
 
+  const assignSection = assignSectionId != null
+    ? (data.classes || []).find((c) => c.sectionId === assignSectionId) ?? null
+    : null;
+
   return (
     <div className="space-y-3">
-      {/* Tien do thu gio - so lieu quan trong nhat cua man nay, de len dau. */}
+      {error && (
+        <Notice tone="red" icon={TriangleAlert}>
+          {error}
+        </Notice>
+      )}
+
+      {/* Tien do xu ly - so lieu quan trong nhat cua man nay, de len dau. Hai
+          viec CHUA XONG (phan cong GV / khai gio) deu tinh vao day, vi ca hai
+          deu la dieu kien can truoc khi Giai doan 1 xep duoc dung. */}
       <div className="bg-card flex flex-wrap items-center justify-between gap-4 rounded-xl border p-4 shadow-sm">
         <p className="text-muted-foreground max-w-prose text-xs">
-          Điều phối viên nhập khung giờ GV thỉnh giảng có thể dạy. Buổi của GV cơ hữu không
-          thuộc bước này.
+          Mỗi lớp thỉnh giảng cần đủ hai việc trước khi xếp: có giảng viên thật (không phải chỗ
+          trống), và giảng viên đó đã khai giờ có thể dạy. Buổi của GV cơ hữu không thuộc bước này.
         </p>
         <div className="min-w-56">
           <p className="text-2xl font-semibold tracking-tight tabular-nums">
@@ -99,7 +132,7 @@ export default function SubmissionsPage({ role }) {
               /{sq.guestCount}
             </span>
             <span className="text-muted-foreground ml-2 text-xs font-normal">
-              buổi đã có giờ
+              buổi sẵn sàng
             </span>
           </p>
           <div className="bg-muted mt-1.5 h-1.5 overflow-hidden rounded-full">
@@ -139,16 +172,24 @@ export default function SubmissionsPage({ role }) {
       {activeView === VIEW.QUEUE && (
         <QueueView
           sq={sq}
+          teachers={data.teachers || []}
           canEdit={canEdit}
           loading={loading}
-          openSectionId={openSectionId}
-          setOpenSectionId={setOpenSectionId}
-          onSave={handleSave}
+          openTeacherId={openTeacherId}
+          setOpenTeacherId={setOpenTeacherId}
+          onAssign={setAssignSectionId}
+          onSaveTeacherAvailability={handleSaveTeacherAvailability}
           onGoTable={() => setView(VIEW.TABLE)}
           coordFilter={coordFilter}
-          onClearCoord={() => { setCoordFilter(null); setQueueLimit(QUEUE_STEP); }}
+          onClearCoord={() => {
+            setCoordFilter(null);
+            setQueueLimit(QUEUE_STEP);
+            setUnassignedLimit(QUEUE_STEP);
+          }}
           limit={queueLimit}
           onMore={() => setQueueLimit(queueLimit + QUEUE_STEP)}
+          unassignedLimit={unassignedLimit}
+          onMoreUnassigned={() => setUnassignedLimit(unassignedLimit + QUEUE_STEP)}
         />
       )}
 
@@ -172,8 +213,21 @@ export default function SubmissionsPage({ role }) {
           onPickCoord={(name) => {
             setCoordFilter(name);
             setQueueLimit(QUEUE_STEP);
+            setUnassignedLimit(QUEUE_STEP);
             setView(VIEW.QUEUE);
           }}
+        />
+      )}
+
+      {/* Phan cong giang vien dung LAI form cua "Dữ liệu học phần" (khong viet
+          mot form rieng): PATCH lop doi hoi gui DU CA form (validate_section_body
+          o backend khong merge tung phan), tu viet mot ban rut gon o day de "gan
+          nhanh" se de am tham lam rong cac truong khac cua lop. */}
+      {assignSection && (
+        <SectionEditDrawer
+          data={data}
+          section={assignSection}
+          onClose={() => setAssignSectionId(null)}
         />
       )}
     </div>
@@ -181,8 +235,8 @@ export default function SubmissionsPage({ role }) {
 }
 
 function QueueView({
-  sq, canEdit, loading, openSectionId, setOpenSectionId, onSave, onGoTable,
-  coordFilter, onClearCoord, limit, onMore,
+  sq, teachers, canEdit, loading, openTeacherId, setOpenTeacherId, onAssign, onSaveTeacherAvailability, onGoTable,
+  coordFilter, onClearCoord, limit, onMore, unassignedLimit, onMoreUnassigned,
 }) {
   if (sq.queue.length === 0) {
     return (
@@ -195,87 +249,256 @@ function QueueView({
           </Button>
         }
       >
-        Cả {sq.guestCount} buổi thỉnh giảng đều đã có khung giờ cụ thể — không còn giờ nào
-        phải thu.
+        Cả {sq.guestCount} buổi thỉnh giảng đều đã có giảng viên và giờ cụ thể — không còn gì
+        phải xử lý.
       </Notice>
     );
   }
 
-  const queue = coordFilter ? sq.queue.filter((r) => r.coordinator === coordFilter) : sq.queue;
-  const shown = queue.slice(0, limit);
+  const unassigned = coordFilter
+    ? sq.unassigned.filter((r) => r.coordinator === coordFilter)
+    : sq.unassigned;
+  const needsHours = coordFilter
+    ? sq.needsHours.filter((r) => r.coordinator === coordFilter)
+    : sq.needsHours;
+  const coordNote = coordFilter && (
+    <span className="text-muted-foreground ml-auto inline-flex items-center gap-1.5 text-xs">
+      Đang lọc theo <strong className="text-foreground">{coordFilter}</strong>
+      <Button variant="ghost" size="sm" onClick={onClearCoord}>
+        <X className="size-3.5" />
+        bỏ lọc
+      </Button>
+    </span>
+  );
+
+  return (
+    <div className="space-y-3">
+      {/* Nhom 1: THIEU GV THAT - phai giai quyet TRUOC, vi "Nhap gio" cho mot
+          cho trong la vo nghia (khong ai la nguoi that de hoi ranh luc nao). */}
+      {unassigned.length > 0 && (
+        <UnassignedCard
+          rows={unassigned}
+          total={sq.unassigned.length}
+          coordFilter={coordFilter}
+          coordNote={coordNote}
+          canEdit={canEdit}
+          onAssign={onAssign}
+          limit={unassignedLimit}
+          onMore={onMoreUnassigned}
+        />
+      )}
+
+      {/* Nhom 2: DA CO GV thinh giang, chi thieu gio - liet ke theo HOC PHAN,
+          nhung "Nhap gio" van la hanh dong CUA GIANG VIEN (xem NeedsHoursCard). */}
+      {needsHours.length > 0 && (
+        <NeedsHoursCard
+          sq={sq}
+          teachers={teachers}
+          rows={needsHours}
+          coordNote={unassigned.length > 0 ? null : coordNote}
+          canEdit={canEdit}
+          loading={loading}
+          openTeacherId={openTeacherId}
+          setOpenTeacherId={setOpenTeacherId}
+          onSaveTeacherAvailability={onSaveTeacherAvailability}
+          limit={limit}
+          onMore={onMore}
+        />
+      )}
+    </div>
+  );
+}
+
+function UnassignedCard({ rows, total, coordFilter, coordNote, canEdit, onAssign, limit, onMore }) {
+  const shown = rows.slice(0, limit);
+  return (
+    <Card
+      title={`Chưa phân công giảng viên (${rows.length}${coordFilter ? ` / ${total}` : ""})`}
+      note={
+        canEdit
+          ? 'Lớp này đang gán cho một "chỗ trống" — bấm "Phân công giảng viên" để chọn người thật.'
+          : 'Vai trò "Xem thôi" không phân công được.'
+      }
+      headExtra={coordNote}
+    >
+      <ul className="divide-y">
+        {shown.map((r) => (
+          <li key={r.sectionId} className="flex flex-wrap items-start justify-between gap-3 p-3">
+            <div className="min-w-0 space-y-0.5">
+              <p className="flex flex-wrap items-baseline gap-x-2 text-sm">
+                <span className="text-muted-foreground tabular-nums">#{r.sectionId}</span>
+                <span>{r.courseName}</span>
+              </p>
+              <p className="text-muted-foreground text-xs">
+                {r.programLabel} · {r.coordinator} · {r.roomType} · {r.duration} tiết
+                <span className="ml-2 text-red-700">{r.reason}</span>
+              </p>
+            </div>
+            {canEdit && (
+              <Button size="sm" onClick={() => onAssign(r.sectionId)}>
+                <UserRoundPlus className="size-4" />
+                Phân công giảng viên
+              </Button>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      {rows.length > shown.length && (
+        <div className="flex justify-center border-t p-3">
+          <Button variant="outline" size="sm" onClick={onMore}>
+            Hiện thêm {Math.min(QUEUE_STEP, rows.length - shown.length)} lớp (còn{" "}
+            {rows.length - shown.length})
+          </Button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// Bang liet ke theo HOC PHAN (moi dong = 1 lop) de tra loi dung cau hoi "hoc
+// phan nao chua khai gio, GV nao day hoc phan do" - nhung "Nhap gio" van la
+// hanh dong CUA GIANG VIEN (mot GV day nhieu lop chi hien MOT nut, dat o dong
+// DAI DIEN dau tien cua ho; cac dong con lai cung GV chi ghi chu tro ve dong
+// do, khong bay them nut de tranh mo 2 luoi trung nhau cho cung 1 nguoi).
+function NeedsHoursCard({
+  sq, teachers, rows, coordNote, canEdit, loading,
+  openTeacherId, setOpenTeacherId, onSaveTeacherAvailability, limit, onMore,
+}) {
+  const [search, setSearch] = useState("");
+  const [program, setProgram] = useState("");
+
+  const programs = useMemo(
+    () => [...new Set(rows.flatMap((r) => r.programParts ?? []))].sort((a, b) => a.localeCompare(b)),
+    [rows],
+  );
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (program && !(r.programParts ?? []).includes(program)) return false;
+      if (!q) return true;
+      return [r.courseName, r.teacherName, r.coordinator, String(r.sectionId)]
+        .some((v) => (v || "").toLowerCase().includes(q));
+    });
+  }, [rows, search, program]);
+
+  const teacherCount = useMemo(
+    () => new Set(filtered.map((r) => r.teacherId)).size,
+    [filtered],
+  );
+  const shown = filtered.slice(0, limit);
+  // Dong DAI DIEN (dau tien) cho tung GV trong TRANG dang hien - chi dong nay
+  // moi co nut + luoi, tinh lai moi lan render nen luon dung voi `shown` hien tai.
+  const seenTeacher = new Set();
 
   return (
     <Card
-      title={`Cần thu giờ (${queue.length}${coordFilter ? ` / ${sq.queue.length}` : ""})`}
+      title={`Học phần chưa khai giờ (${filtered.length} lớp${filtered.length !== rows.length ? `/${rows.length}` : ""} · ${teacherCount} giảng viên)`}
       note={
         canEdit
-          ? 'Bấm "Nhập giờ" để chọn khung giờ ngay tại dòng.'
+          ? 'Bấm "Nhập giờ" để khai giờ rảnh cho giảng viên — áp dụng chung cho MỌI lớp của người đó.'
           : 'Vai trò "Xem thôi" không nộp giờ được.'
       }
       headExtra={
-        coordFilter && (
-          <span className="text-muted-foreground ml-auto inline-flex items-center gap-1.5 text-xs">
-            Đang lọc theo <strong className="text-foreground">{coordFilter}</strong>
-            <Button variant="ghost" size="sm" onClick={onClearCoord}>
-              <X className="size-3.5" />
-              bỏ lọc
-            </Button>
-          </span>
-        )
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <ListSearch
+            value={search}
+            onChange={setSearch}
+            placeholder="Tìm học phần, giảng viên, điều phối viên"
+            className="w-full sm:w-64"
+          />
+          <FilterSelect
+            label="Mọi chương trình"
+            searchable
+            value={program || null}
+            options={programs}
+            onChange={(v) => setProgram(v ?? "")}
+          />
+          {coordNote}
+        </div>
       }
     >
-      <ul className="divide-y">
-        {shown.map((r) => {
-          const isOpen = openSectionId === r.sectionId;
-          return (
-            <li key={r.sectionId} className={cn(isOpen && "bg-muted/40")}>
-              <div className="flex flex-wrap items-start justify-between gap-3 p-3">
-                <div className="min-w-0 space-y-0.5">
-                  <p className="flex flex-wrap items-baseline gap-x-2 text-sm">
-                    <span className="text-muted-foreground tabular-nums">#{r.sectionId}</span>
-                    <strong>{r.teacherName}</strong>
-                    <span>{r.courseName}</span>
-                  </p>
-                  <p className="text-muted-foreground text-xs">
-                    {r.programLabel} · {r.coordinator} · {r.roomType} · {r.duration} tiết
-                    <span className="ml-2 text-amber-700">{r.reason}</span>
-                  </p>
-                </div>
-                {canEdit && (
-                  <Button
-                    size="sm"
-                    variant={isOpen ? "outline" : "default"}
-                    onClick={() => setOpenSectionId(isOpen ? null : r.sectionId)}
-                  >
-                    {isOpen ? "Đóng" : "Nhập giờ"}
-                  </Button>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Học phần</TableHead>
+            <TableHead>Giảng viên</TableHead>
+            <TableHead>Chương trình</TableHead>
+            <TableHead>Điều phối viên</TableHead>
+            <TableHead />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {shown.map((r) => {
+            const isAnchor = !seenTeacher.has(r.teacherId);
+            if (isAnchor) seenTeacher.add(r.teacherId);
+            const isOpen = openTeacherId === r.teacherId;
+            const teacher = teachers.find((t) => t.id === r.teacherId);
+            return (
+              <Fragment key={r.sectionId}>
+                <TableRow className={cn(isOpen && "bg-muted/40")}>
+                  <TableCell className="whitespace-normal">
+                    {r.courseName}
+                    <span className="text-muted-foreground ml-1 text-xs">
+                      #{r.sectionId} · {r.roomType} · {r.duration} tiết
+                    </span>
+                  </TableCell>
+                  <TableCell>{r.teacherName}</TableCell>
+                  <TableCell>{r.programLabel}</TableCell>
+                  <TableCell className="text-muted-foreground">{r.coordinator}</TableCell>
+                  <TableCell className="text-right">
+                    {!canEdit ? null : isAnchor ? (
+                      <Button
+                        size="sm"
+                        variant={isOpen ? "outline" : "default"}
+                        onClick={() => setOpenTeacherId(isOpen ? null : r.teacherId)}
+                      >
+                        {isOpen ? "Đóng" : "Nhập giờ"}
+                      </Button>
+                    ) : (
+                      <span className="text-muted-foreground text-xs whitespace-nowrap">
+                        ↑ cùng GV ở trên
+                      </span>
+                    )}
+                  </TableCell>
+                </TableRow>
+
+                {isOpen && isAnchor && canEdit && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={5} className="bg-muted/40 p-3">
+                      <SubmissionWindowGrid
+                        // Man nay chi lam viec voi GV THINH GIANG - gioi han toi
+                        // Thu 7 (index 5), dung quy tac sc.MAX_DAY_INDEX["GUEST"].
+                        numDays={Math.min(sq.numDays, 6)}
+                        slotsPerDay={sq.slotsPerDay}
+                        initialSlots={teacher?.availabilitySlots || []}
+                        teachingSlots={teacher?.teachingSlots || []}
+                        saving={loading}
+                        onSave={(slots) => onSaveTeacherAvailability(r.teacherId, slots)}
+                        onCancel={() => setOpenTeacherId(null)}
+                      />
+                    </TableCell>
+                  </TableRow>
                 )}
-              </div>
+              </Fragment>
+            );
+          })}
+          {shown.length === 0 && (
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={5} className="text-muted-foreground py-6 text-center">
+                Không có lớp nào khớp bộ lọc.
+              </TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
 
-              {isOpen && canEdit && (
-                <div className="border-t px-3 py-3">
-                  <SubmissionWindowGrid
-                    // Man nay chi lam viec voi lop THINH GIANG - gioi han toi Thu 7
-                    // (index 5), dung quy tac sc.MAX_DAY_INDEX["GUEST"] o backend.
-                    numDays={Math.min(sq.numDays, 6)}
-                    slotsPerDay={sq.slotsPerDay}
-                    initialSlots={r.isFreeChoice ? [] : r.windowSlots}
-                    saving={loading}
-                    onSave={(slots) => onSave(r.sectionId, slots)}
-                    onCancel={() => setOpenSectionId(null)}
-                  />
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-
-      {queue.length > shown.length && (
+      {filtered.length > shown.length && (
         <div className="flex justify-center border-t p-3">
           <Button variant="outline" size="sm" onClick={onMore}>
-            Hiện thêm {Math.min(QUEUE_STEP, queue.length - shown.length)} buổi (còn{" "}
-            {queue.length - shown.length})
+            Hiện thêm {Math.min(QUEUE_STEP, filtered.length - shown.length)} lớp (còn{" "}
+            {filtered.length - shown.length})
           </Button>
         </div>
       )}
@@ -358,7 +581,11 @@ function TableView({ sq, search, program, stateFilter, limit, onSearch, onProgra
                   {r.sectionId}
                 </TableCell>
                 <TableCell>
-                  <Pill tone={meta.tone}>{meta.label}</Pill>
+                  {r.isUnassigned ? (
+                    <Pill tone="red">Chưa phân công GV</Pill>
+                  ) : (
+                    <Pill tone={meta.tone}>{meta.label}</Pill>
+                  )}
                 </TableCell>
                 <TableCell>{r.teacherName}</TableCell>
                 <TableCell className="whitespace-normal">{r.courseName}</TableCell>
@@ -405,7 +632,7 @@ function CoordsView({ sq, onPickCoord }) {
   return (
     <Card
       title={`Theo điều phối viên (${sq.coordinators.length})`}
-      note="Độ dài thanh = số buổi còn thiếu giờ · bấm một dòng để mở hàng đợi của riêng người đó"
+      note="Độ dài thanh = số buổi còn thiếu GV hoặc thiếu giờ · bấm một dòng để mở việc của riêng người đó"
     >
       <ul className="divide-y">
         {sq.coordinators.map((c) => {
@@ -416,7 +643,7 @@ function CoordsView({ sq, onPickCoord }) {
               <Row
                 type={isDone ? undefined : "button"}
                 onClick={isDone ? undefined : () => onPickCoord(c.coordinator)}
-                title={isDone ? c.coordinator : `Mở ${c.missing} buổi cần thu giờ của ${c.coordinator}`}
+                title={isDone ? c.coordinator : `Mở ${c.missing} buổi cần xử lý của ${c.coordinator}`}
                 className={cn(
                   "flex w-full items-center gap-3 px-3 py-2 text-left text-sm",
                   !isDone && "hover:bg-muted transition-colors",

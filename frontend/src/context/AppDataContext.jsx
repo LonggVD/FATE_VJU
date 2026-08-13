@@ -108,15 +108,6 @@ export function AppDataProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const doSubmitAvailability = useCallback((sectionId, windowSlots) => runAction(
-    () => scheduler.submitAvailability(sectionId, windowSlots),
-    {
-      onSuccess: () => { refreshData(); },
-      messageFn: () => `Đã nộp giờ cho buổi #${sectionId} (${windowSlots.length} khung giờ).`,
-      errorPrefix: "Nộp giờ thất bại",
-    },
-  ), [runAction, refreshData]);
-
   const solveGuest = useCallback(() => runAction(
     () => scheduler.solveGuest(),
     {
@@ -406,7 +397,7 @@ export function AppDataProvider({ children }) {
 
   const value = {
     data, guestResult, residentResult, loading, error, gd2HetHieuLuc,
-    refreshData, doSubmitAvailability,
+    refreshData,
     solveGuest, solveResident, doMoveLesson, doClearOverride, doSaveSchedule,
     initManual, doImportPreview, doImportCommit,
     doLecturersPreview, doLecturersCommit, doChotCourse, doBoChotCourse,

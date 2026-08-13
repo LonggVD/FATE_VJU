@@ -115,8 +115,8 @@ const SCREENS = [
     title: 'Chuẩn bị dữ liệu',
     desc: '2 tab con, dùng trước khi giải.',
     items: [
-      '"Khung giờ đã báo" — tổng hợp giờ GV đã nộp',
-      '"Giờ rảnh GV" — từng giảng viên tự chọn khung giờ rảnh',
+      '"Học phần" — việc cần làm theo lớp: chưa có giảng viên (bấm "Phân công giảng viên") hay đã có giảng viên nhưng chưa khai giờ (bấm "Nhập giờ")',
+      '"Giảng viên" — danh sách giảng viên (cơ hữu/thỉnh giảng), sửa thông tin và khai giờ có thể dạy',
     ],
   },
   {
@@ -173,7 +173,7 @@ const GLOSSARY = [
   {
     term: '(Chưa phân công)',
     tone: 'slate',
-    def: 'Nhãn cho lớp nạp từ Excel nhưng ô giảng viên bị bỏ trống hoặc chỉ ghi tên đơn vị điều phối. Có cờ nội bộ riêng để không bị tính nhầm trùng lịch, và bị lọc khỏi màn "Giờ rảnh GV".',
+    def: 'Nhãn cho lớp nạp từ Excel nhưng ô giảng viên bị bỏ trống hoặc chỉ ghi tên đơn vị điều phối. Có cờ nội bộ riêng để không bị tính nhầm trùng lịch, bị lọc khỏi màn "Giảng viên", và hiện riêng trong nhóm "Chưa phân công giảng viên" ở tab "Học phần" — bấm "Phân công giảng viên" để chọn người thật.',
   },
 ];
 
@@ -226,8 +226,8 @@ const LIMITATIONS = [
 
 const FAQ = [
   {
-    q: 'Giải xong thấy vài lớp không có giờ, vì sao?',
-    a: 'Kiểm tra lớp đó đã có khung giờ giảng viên báo hay chưa (mục "Khung giờ đã báo"). Lớp chưa có giờ báo sẽ không được đưa vào giải, không tính là lỗi thuật toán.',
+    q: 'Bấm "Xếp thỉnh giảng" mà bị chặn, báo còn lớp chưa sẵn sàng?',
+    a: 'Vào "Chuẩn bị dữ liệu → Học phần", xử lý hết mục "Chưa phân công giảng viên" (chọn người thật thay cho chỗ trống) và "Có giảng viên, chưa khai giờ" (bấm "Nhập giờ"). Hệ thống chặn giải cho tới khi xong cả hai, để không xếp theo giờ giả định.',
   },
   {
     q: 'Sửa tay một buổi xong, giải lại thì bị mất thay đổi?',

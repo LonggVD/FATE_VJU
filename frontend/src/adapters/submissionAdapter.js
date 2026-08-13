@@ -1,6 +1,7 @@
 // Gop 1 map "{day}-{period}" -> true (o da click chon) thanh 1 danh sach
 // slot int[] (slot = day*slotsPerDay+period) - dung gui thang cho
-// submit_availability(data, section_id, window_slots) cua scheduler_core.py.
+// updateManualTeacher(id, {availability}) (PATCH /api/manual/teacher/<id>),
+// hoac cac endpoint khac nhan "danh sach slot phang" cung khuon.
 // Khac ban goc AvailabilityGrid cua FE_SCHEDULE: khong gop thanh khung
 // gio-bat-dau/gio-ket-thuc (backend nay khong can, chi can list slot roi rac).
 export function submissionToWindowSlots(selectedCellsMap, slotsPerDay) {

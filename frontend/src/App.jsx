@@ -15,7 +15,6 @@ import DataPage from "./presentation/pages/DataPage";
 import SchedulePage from "./presentation/pages/SchedulePage";
 import HistoryPage from "./presentation/pages/HistoryPage";
 import ManualEntryPage from "./presentation/pages/ManualEntryPage";
-import TeachersPage from "./presentation/pages/TeachersPage";
 import GuidePage from "./presentation/pages/GuidePage";
 import { readUrlState, writeUrlState } from "./adapters/urlState";
 
@@ -24,7 +23,6 @@ const PAGES = {
   schedule: SchedulePage,
   history: HistoryPage,
   manual: ManualEntryPage,
-  teachers: TeachersPage,
   guide: GuidePage,
 };
 

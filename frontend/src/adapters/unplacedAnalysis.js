@@ -48,7 +48,7 @@ export const REASON_META = {
     label: "Chưa nộp giờ",
     cls: "pending",
     hint: "Không có khung giờ nào để xếp",
-    fix: "Điều phối viên nộp giờ ở tab \"Khung giờ đã báo\"",
+    fix: "Điều phối viên nộp giờ ở tab \"Học phần\"",
   },
   OTHER: {
     label: "Chưa xác định được",

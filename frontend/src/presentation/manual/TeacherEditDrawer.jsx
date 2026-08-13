@@ -81,7 +81,12 @@ export default function TeacherEditDrawer({ data, teacher, classes = [], onClose
 
   const handleSaveAvailability = async (slots) => {
     if (teacherId == null) return;
-    await updateManualTeacher(teacherId, { availability: slots });
+    setError(null);
+    try {
+      await updateManualTeacher(teacherId, { availability: slots });
+    } catch (err) {
+      setError(err.message);
+    }
   };
 
   return (
